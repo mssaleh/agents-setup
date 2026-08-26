@@ -1,0 +1,13 @@
+# manifests/plugins.tsv — the plugin allowlist. Deliberately short.
+#
+# agent	marketplace	marketplace_source	plugin
+#
+# Plugins bundle far more than a single capability, so a tool earns a row here
+# only when it cannot be expressed as a skill plus an MCP server. `zephyr-ai`
+# qualifies: it ships an indexed Zephyr tree, an MCP server over that index, and
+# subagents, none of which the skill or MCP formats carry.
+#
+# The sync installs what is listed and *reports* anything installed that is not.
+# It never uninstalls: a plugin you added by hand is a decision, not drift.
+
+claude-code	zephyr-ai	mssaleh/zephyr-ai	zephyr-ai

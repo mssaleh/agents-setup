@@ -1,0 +1,22 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Local test artifacts
+*.log
+/tmp/
+
+# Never track credentials, even by accident
+*.pem
+*.key
+.env
+*.env
+auth.json
+.credentials.json

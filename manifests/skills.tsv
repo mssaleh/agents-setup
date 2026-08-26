@@ -1,0 +1,24 @@
+# manifests/skills.tsv — the global skill store, one row per source repository.
+#
+# source	skills	mode
+#
+#   source  A spec `skills add` accepts: owner/repo, or owner/repo/path/to/skill.
+#   skills  Comma-separated skill names as they appear in the store. Authoritative:
+#           the sync prunes anything in the store or the lock that is not listed here.
+#   mode    select — pass `--skill <skills>`; the repo carries more than we want.
+#           whole  — the source spec already names exactly what we want.
+#
+# Skill names are the `name:` in each SKILL.md, which is what `--skill` matches.
+# They are not always the repo's directory name (react-best-practices installs as
+# vercel-react-best-practices), so take them from `skills add <source> -l`.
+
+vercel-labs/agent-skills	vercel-composition-patterns,vercel-optimize,vercel-react-best-practices,vercel-react-view-transitions,web-design-guidelines	select
+vercel-labs/skills	find-skills	select
+vercel/next.js	next-cache-components-adoption,next-cache-components-optimizer,next-dev-loop,next-partial-prefetching-adoption	select
+shadcn/ui	shadcn	select
+pydantic/skills	building-pydantic-ai-agents,pydantic,pydantic-ai-harness	select
+run-llama/llamaparse-agent-skills	liteparse,llamacloud-index,llamaparse	select
+CopilotKit/CopilotKit	a2ui-renderer,channels-setup,copilotkit-agui,copilotkit-channels,copilotkit-contribute,copilotkit-debug,copilotkit-develop,copilotkit-integrations,copilotkit-self-update,copilotkit-setup,copilotkit-upgrade,inspector-docs,react-core,runtime,setup-slack-channel	select
+temporalio/skill-temporal-developer	temporal-developer	whole
+qdrant/skills/meta/qdrant-advisor	qdrant-advisor	whole
+livekit/agent-skills	livekit-agents	select
