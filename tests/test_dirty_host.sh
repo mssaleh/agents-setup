@@ -1,16 +1,7 @@
 #!/usr/bin/env bash
 # A host that has never been converged, with everything it accumulated first.
-#
-# Two things have to come out of this run. It has to be readable: a plan, then
-# the short list of things the plan does not cover — not the plan repeated back
-# under ✗, which is how an unconfigured MacBook produced 131 failures and a
-# non-zero exit with nothing actually wrong with it.
-#
-# And it must not delete a skill somebody wrote. The manifest is authoritative
-# over what a source installed and nothing else, and the lock is what says
-# which is which: `skills add` records a source, a sourceUrl and a skillPath
-# for everything it fetches, so an entry it has never heard of was written
-# here. Nobody has to list those, and there can be any number of them.
+# It has to read as a plan plus what the plan does not cover, and it must not
+# delete a skill somebody wrote — the lock is what tells the two apart.
 set -uo pipefail
 # shellcheck disable=SC2034  # read by helpers.sh
 TEST_NAME=test_dirty_host
@@ -34,7 +25,7 @@ export SKILLS_STUB_PROVIDES="acme/solo/deep=gamma"
 . "$REPO_DIR/lib/agentcfg.sh"; . "$REPO_DIR/lib/skills.sh"
 
 # --- the mess ---
-# store_add <name> [lock] — a payload, optionally recorded as fetched.
+# A payload, optionally recorded in the lock as fetched.
 store_add() {
   mkdir -p "$AGENTS_STORE/$1"
   [[ "${3:-}" == bare ]] || printf -- '---\nname: %s\n---\n' "$1" > "$AGENTS_STORE/$1/SKILL.md"
@@ -46,11 +37,9 @@ store_add sketches "" bare          # written here, and not a skill yet
 store_add leftover      lock        # fetched once, no longer declared
 store_add halfwritten   lock bare   # fetched, truncated, no longer declared
 printf 'orphan-one\norphan-two\n' >> "$SANDBOX/state/lock"   # payloads long gone
-# Links an agent kept after the payload moved.
 ln -sfn "$AGENTS_STORE/orphan-one" "$CODEX_HOME/skills/orphan-one"
 ln -sfn "$AGENTS_STORE/gone" "$CLAUDE_HOME/skills/gone"
-# The declared stdio server, already installed as a global binary rather than
-# through npx, and a second name for an endpoint the manifest already installs.
+# A global binary instead of npx, and a second name for a declared endpoint.
 sandbox_set_mcp claude-code devtools stdio /usr/local/bin/devtools-mcp
 sandbox_set_mcp claude-code docs-alias remote https://docs.example/mcp
 "$SANDBOX/bin/sandbox-render"
@@ -58,7 +47,6 @@ sandbox_set_mcp claude-code docs-alias remote https://docs.example/mcp
 # --- the dry run ---
 out=$("$REPO_DIR/sync.sh" --dry-run 2>&1); status=$?
 
-# What it plans is the whole job.
 assert_contains "plans the missing skills"      "$out" "fetching alpha beta"
 assert_contains "plans the stale payload"       "$out" "removing undeclared skill leftover"
 assert_contains "plans the truncated payload"   "$out" "removing undeclared skill halfwritten"
@@ -66,32 +54,27 @@ assert_contains "plans the orphan lock entry"   "$out" "removing undeclared skil
 assert_contains "plans the agents that lack the server" "$out" "installing devtools into codex,opencode"
 assert_contains "plans the plugin"              "$out" "installing plugin widget@widgets"
 
-# The row names a package, not an invocation. A global binary already running
-# that package satisfies it, and rewriting it into an npx call is churn — npx
-# costs a fifth of a second to half a second per launch over the installed
-# binary and buys nothing the manifest asked for.
+# The row names a package, not an invocation, so the installed binary satisfies
+# it and rewriting it into an npx call would be churn.
 assert_absent   "a local binary of the declared package is not rewritten" \
   "$out" "installing devtools into claude-code"
 assert_contains "and what it actually runs is named" "$out" \
   "'devtools' runs /usr/local/bin/devtools-mcp"
 
-# Nothing the lock has never heard of is touched, whatever its state, and
-# whatever it is called. No row of any manifest mentions these.
+# Nothing the lock never fetched is touched. No manifest row mentions these.
 assert_absent   "a skill written here is not pruned"  "$out" "removing undeclared skill handmade"
 assert_absent   "a directory written here is not pruned" "$out" "removing undeclared skill sketches"
 assert_contains "a skill written here is mirrored"    "$out" "linking handmade"
 assert_contains "what was written here is named once" "$out" \
   "not installed from a source, left alone: handmade sketches"
 
-# Nothing is planned and unplanned in the same run.
 assert_eq "no link is created and removed at once" \
   "$(grep -cE '^~ (claude-code|codex): removing (dangling|stale) link (alpha|beta|gamma|handmade)$' <<< "$out")" "0"
 
-# A second name for a declared endpoint is called out, not merely listed.
 assert_contains "a duplicate endpoint is named" "$out" \
   "'docs-alias' is a second name for https://docs.example/mcp"
 
-# And verification reports only what the plan leaves behind — here, nothing.
+# Verification reports only what the plan leaves behind — here, nothing.
 assert_absent   "verification does not repeat the plan"        "$out" "declared skills missing"
 assert_absent   "verification does not repeat the mirror plan" "$out" "skills missing or dangling"
 assert_absent   "verification does not repeat the mcp plan"    "$out" "absent from"

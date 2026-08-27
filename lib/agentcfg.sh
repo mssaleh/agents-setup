@@ -1,36 +1,22 @@
 #!/usr/bin/env bash
-# lib/agentcfg.sh — read what each agent has actually configured.
+# lib/agentcfg.sh — three config formats normalised to
+# `agent <TAB> name <TAB> kind <TAB> target <TAB> enabled`.
 #
-# Verification reads the agent's own config, never a receipt this repo wrote.
-# The three agents store MCP servers in three formats, so everything is
-# normalised once into `agent <TAB> name <TAB> kind <TAB> target <TAB> enabled`.
-#
-# Comparing the target rather than the name is the point. A name collision —
-# the same `mcp add <name>` run with three different URLs — leaves one server
-# holding a name that describes none of them, and a name-only check calls that
-# converged. `enabled` matters for the same reason: a server present with the
-# right URL and `enabled = false` does not run.
-#
-# The files are read directly rather than through each agent's `mcp list`: those
-# commands health-check every server, so they need the network and take seconds,
-# and `claude mcp get` omits the target entirely for a server disabled in the
-# current project.
+# Parsed directly rather than through each agent's `mcp list`: those health-check
+# every server, so they need the network and take seconds, and `claude mcp get`
+# omits the target for a server disabled in the current project.
 # shellcheck shell=bash
 
-# Every one of these is the same path on macOS and Linux: the agents and the
-# two CLIs derive them from the home directory, not from a platform config
-# location. Two of them are asymmetric on purpose. Claude Code and the skills
-# CLI both take the configuration home from CLAUDE_CONFIG_DIR, so the skills
-# directory follows it; `add-mcp` writes ~/.claude.json whatever that variable
-# says, so the config file does not.
+# Same paths on macOS and Linux — all homedir-derived. The asymmetry is upstream:
+# Claude Code and `skills` honour CLAUDE_CONFIG_DIR, `add-mcp` writes
+# ~/.claude.json regardless.
 CLAUDE_CONFIG=${CLAUDE_CONFIG:-$HOME/.claude.json}
 CLAUDE_HOME=${CLAUDE_HOME:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}
 CODEX_HOME=${CODEX_HOME:-$HOME/.codex}
 
-# OpenCode's global config is whichever of these two exists, and add-mcp
-# creates the .jsonc when neither does. Reading a fixed .jsonc on a host whose
-# file is .json finds no servers at all, which reads as "every row missing" and
-# reinstalls all of them on every run.
+# add-mcp writes whichever of these exists, and creates the .jsonc when neither
+# does. A fixed .jsonc on a .json host finds no servers, so every row reads as
+# missing and is reinstalled every run.
 opencode_config_path() {
   local dir="$HOME/.config/opencode"
   [[ -f "$dir/opencode.jsonc" ]] && { printf '%s\n' "$dir/opencode.jsonc"; return; }
@@ -41,14 +27,9 @@ OPENCODE_CONFIG=${OPENCODE_CONFIG:-$(opencode_config_path)}
 
 MCP_TABLE_CACHE=""
 
-# json_mcp_block <file> <top-level key> — "name<TAB>kind<TAB>target<TAB>enabled"
-# for every server under that key.
-#
-# Structure comes from brace depth, not from indentation. Both agents happen to
-# write two-space JSON today, but a hand-edited or reformatted file is still the
-# same document, and an indentation-based reader silently returns nothing for it
-# — which reads as "every server is missing" and rewrites a file that was fine.
-# Comments are skipped outside string literals, so opencode.jsonc is accepted.
+# Brace depth, not indentation: a reformatted or minified file is the same
+# document, and an indentation reader returns nothing for it — which reads as
+# every server missing. JSONC comments are skipped outside string literals.
 json_mcp_block() {
   [[ -f "$1" ]] || return 0
   awk -v want="$2" '
@@ -56,9 +37,8 @@ json_mcp_block() {
       if (name == "") return
       if (url != "") { printf "%s\tremote\t%s\t%s\n", name, url, enabled }
       else if (cmd != "" || na > 0) {
-        # OpenCode packs runner and arguments into one "command" array, Claude
-        # Code splits them across "command" and "args". Either way the runner is
-        # not the identity: the package it runs is.
+        # OpenCode packs runner and args into one "command" array, Claude Code
+        # splits them. Either way the runner is not the identity.
         first = 1
         if (cmd == "" && na > 0 && arg[1] ~ /^npx(\.cmd)?$/) first = 2
         rest = (cmd == "npx" || cmd == "npx.cmd") ? "" : cmd
@@ -70,10 +50,8 @@ json_mcp_block() {
       }
       name = ""; url = ""; cmd = ""; na = 0; enabled = "true"
     }
-    # The field a value belongs to is the key most recently seen at this depth.
-    # Deriving it here rather than at each call site is what keeps a minified
-    # document correct: with no whitespace, `"url":"X","enabled":true}` closes
-    # on the brace, and a caller-set field would still be pointing at "url".
+    # The field is the key most recently seen at this depth. Derived here, not at
+    # the call site: minified, `"url":"X","enabled":true}` closes on the brace.
     function value(v) {
       if (!inblock || depth != 3) return
       if (inarr) { arg[++na] = v; return }
@@ -125,9 +103,8 @@ json_mcp_block() {
   ' "$1"
 }
 
-# toml_mcp_servers <file> — Codex. A bare table name stops at the first dot so
-# the [mcp_servers.node_repl.env] sub-table is not mistaken for a server; a
-# quoted name may contain dots.
+# Codex. A bare table name stops at the first dot, so [mcp_servers.x.env] is not
+# a server; a quoted name may contain dots.
 toml_mcp_servers() {
   [[ -f "$1" ]] || return 0
   awk '
@@ -172,8 +149,7 @@ toml_mcp_servers() {
   ' "$1"
 }
 
-# agent_mcp_table — one row per configured server, across every agent.
-# Cached for the process: the passes ask about the same servers repeatedly.
+# Cached: the passes ask about the same servers repeatedly.
 agent_mcp_table() {
   if [[ -z "$MCP_TABLE_CACHE" ]]; then
     MCP_TABLE_CACHE=$(
@@ -191,31 +167,21 @@ agent_mcp_names() {
   agent_mcp_table | awk -F'\t' -v a="$1" '$1 == a && $2 != "" { print $2 }' | sort -u
 }
 
-# agent_mcp_target <agent> <name> — "kind<TAB>target<TAB>enabled", empty if absent.
+# "kind<TAB>target<TAB>enabled", empty if absent.
 agent_mcp_target() {
   agent_mcp_table | awk -F'\t' -v a="$1" -v n="$2" '$1 == a && $2 == n { print $3"\t"$4"\t"$5; exit }'
 }
 
-# claude_project_mcp — "<name>\t<project path>" per project-scoped server.
-# These are what `claude mcp add` creates without --scope user: they work in one
-# directory and are invisible everywhere else.
+# "<name>\t<project path>" per project-scoped server — what `claude mcp add`
+# creates without --scope user, working in one directory and nowhere else.
 claude_project_mcp() {
   [[ -f "$CLAUDE_CONFIG" ]] || return 0
   awk '
-    # Depth, not indentation, and not "have I seen projects yet": the top-level
-    # mcpServers block sits after projects, so a reader that only latches on
-    # never leaves and reports every user-scope server as belonging to whatever
-    # key it saw last.
-    #
-    # A server name is key[4], read while inside the mcpServers object, so the
-    # row is emitted when that name`s own object opens at depth 5. Keys deeper
-    # than the current object are cleared on close: an empty "mcpServers": {}
-    # would otherwise leave key[3] set and make the next unrelated object at
-    # that depth look like a project`s server list.
-    #
-    #   depth 2  inside projects  — key[2] is a project path
-    #   depth 4  inside a project — key[3] is mcpServers
-    #   depth 5  a server object  — key[4] is its name
+    # depth 2 in projects: key[2] is the path. depth 4 in a project: key[3] is
+    # mcpServers. depth 5: key[4] is the server name, so the row is emitted there.
+    # The top-level mcpServers block sits after projects, so a reader that only
+    # latches on never leaves. Deeper keys are cleared on close: an empty
+    # "mcpServers": {} would otherwise leave key[3] set for the next object.
     {
       line = $0; n = length(line); i = 1
       while (i <= n) {
@@ -249,7 +215,7 @@ agent_skills_dir() {
   esac
 }
 
-# json_keys_at <file> <indent> — object keys at exactly that indentation.
+# Object keys at exactly that indentation.
 json_keys_at() {
   [[ -f "$1" ]] || return 0
   sed -n "s/^ \{$2\}\"\([^\"]*\)\": [{[].*$/\1/p" "$1"

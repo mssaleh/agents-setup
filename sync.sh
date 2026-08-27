@@ -26,10 +26,9 @@
 set -uo pipefail
 
 # ── Fetch the payload for the piped one-liner ────────────────────────────
-# curl is not a given: on Debian and Ubuntu it is Priority: optional while wget
-# is Priority: standard. macOS ships curl and has no wget until Homebrew
-# installs one, so either tool has to do. A file:// URL is copied rather than
-# fetched, because curl reads that scheme and wget does not.
+# Either tool: curl is Priority: optional on Debian while wget is standard, and
+# macOS has curl but no wget until Homebrew. file:// is copied — wget cannot
+# read that scheme.
 _sync_fetch() {
   local url="$1" dest="$2" path
   path=${url#file://}
@@ -42,8 +41,7 @@ _sync_fetch() {
     return
   fi
   if command -v wget >/dev/null 2>&1; then
-    # A failed wget leaves an empty file behind, which would then be unpacked
-    # as a truncated archive.
+    # A failed wget leaves an empty file to be unpacked as a truncated archive.
     wget -q -O "$dest" "$url" < /dev/null && return 0
     rm -f "$dest"
     return 1
@@ -53,15 +51,10 @@ _sync_fetch() {
 }
 
 # ── Bootstrap ────────────────────────────────────────────────────────────
-# Piped to bash, $0 is "bash" and BASH_SOURCE is empty, so there are no
-# manifests next to the script and the payload has to be fetched. It goes to a
-# temporary directory and is deleted on exit; everything this run changes is
-# ordinary agent configuration under $HOME, and nothing there points back here.
-#
-# bash reads this script from the same stdin the one-liner is streaming, so a
-# child that reads stdin would eat the rest of it. run() in lib/log.sh closes
-# stdin for every child; the commands below run before it exists and close
-# their own.
+# Piped to bash, BASH_SOURCE is empty and there are no manifests beside the
+# script, so the payload is fetched to a temporary directory and deleted on exit.
+# These commands run before run() exists, so they close their own stdin — bash is
+# still reading the script from it.
 if [[ -z "${BASH_SOURCE[0]:-}" ]] \
   || [[ ! -f "$(dirname "${BASH_SOURCE[0]:-$0}")/manifests/skills.tsv" ]]; then
   _sync_tmp_base=${TMPDIR:-/tmp}; _sync_tmp_base=${_sync_tmp_base%/}
@@ -71,8 +64,7 @@ if [[ -z "${BASH_SOURCE[0]:-}" ]] \
   mkdir -p "$REPO_DIR"
 
   _sync_cleanup() {
-    # The guard keeps an unexpectedly empty or altered variable from turning
-    # cleanup into a broad deletion.
+    # The guard keeps an altered variable from widening the deletion.
     case "${_sync_payload_root:-}" in
       "${_sync_tmp_base}"/agents-setup.*) rm -rf -- "${_sync_payload_root}" ;;
     esac
@@ -116,8 +108,8 @@ MANIFEST_DIR=${MANIFEST_DIR:-$REPO_DIR/manifests}
 . "$REPO_DIR/lib/verify.sh"
 
 ONLY=""
-# The header above is the help text. It is read from the payload rather than
-# from BASH_SOURCE, which is empty when the script arrived on stdin.
+# The header above is the help text, read from the payload: BASH_SOURCE is empty
+# when the script arrived on stdin.
 usage() { awk 'NR>1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "$REPO_DIR/sync.sh"; exit 0; }
 
 while (($#)); do
@@ -142,13 +134,11 @@ selected() { [[ -z "$ONLY" || "$ONLY" == "$1" ]]; }
 
 command -v npx >/dev/null 2>&1 || fail "npx is required (node)"
 command -v awk >/dev/null 2>&1 || fail "awk is required"
-# An awk without POSIX character classes reads [[:space:]] as the set of those
-# literal characters, so every config parse here would quietly misread instead
-# of failing. macOS 13+ and every supported Linux ship one that has them.
+# A pre-2019 awk reads [[:space:]] as those literal characters, so every parser
+# here would misread rather than fail.
 awk 'BEGIN { exit !(" " ~ /[[:space:]]/) }' < /dev/null \
   || fail "this awk lacks POSIX character classes; install gawk or a newer one-true-awk"
 
-# Nothing runs against a manifest that cannot mean what it says.
 manifest_validate || fail "fix the manifests above before running"
 
 [[ -n "$DRY_RUN" ]] && info "dry run — no files will be written"
@@ -194,8 +184,6 @@ else
   info "$DELTAS change(s) $([[ -n "$DRY_RUN" ]] && printf 'pending' || printf 'applied')"
 fi
 if ((PROBLEMS > 0)); then
-  # A dry run has fixed nothing, so a problem here is one the plan does not
-  # cover — the only part of a dry run that needs a decision.
   warn "$PROBLEMS problem(s) $([[ -n "$DRY_RUN" ]] && printf 'this run would not fix' || printf 'unresolved above')"
   exit 1
 fi

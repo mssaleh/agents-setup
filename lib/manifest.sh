@@ -2,54 +2,39 @@
 # lib/manifest.sh — read the tab-separated manifests under manifests/.
 # shellcheck shell=bash
 
-# manifest_rows <file> — emit data rows, dropping comments and blank lines.
-# Only a line whose first non-blank character is '#' is a comment, so a '#' may
-# appear inside a URL without truncating the row.
+# Only a leading # is a comment, so a URL fragment survives.
 manifest_rows() {
   local file="$1"
   [[ -f "$file" ]] || fail "missing manifest: $file"
   grep -vE '^[[:space:]]*(#|$)' "$file"
 }
 
-# manifest_field <row> <n> — the nth tab-separated field.
 manifest_field() {
   printf '%s' "$1" | cut -f "$2"
 }
 
-# manifest_skill_names — every skill name the manifest declares, sorted.
-#
-# This is authoritative over the skills a source installed, and over nothing
-# else. What decides whether a store entry is in scope is the lock, not this
-# file: see store_local_names.
+# Authoritative over what a source installed, and nothing else — store_local_names
+# is what decides scope.
 manifest_skill_names() {
   manifest_rows "$MANIFEST_DIR/skills.tsv" | cut -f2 | tr ',' '\n' \
     | sed 's/[[:space:]]//g' | grep -v '^$' | sort -u
 }
 
-# manifest_mcp_names — every MCP server name declared, sorted.
 manifest_mcp_names() {
   manifest_rows "$MANIFEST_DIR/mcp.tsv" | cut -f1 | sort -u
 }
 
-# manifest_mcp_agents <name> — the agent list for one server.
 manifest_mcp_agents() {
   manifest_rows "$MANIFEST_DIR/mcp.tsv" | awk -F'\t' -v n="$1" '$1 == n { print $4; exit }'
 }
 
-# manifest_validate — refuse to act on a manifest that cannot mean what it says.
-#
-# Every one of these used to fail late or not at all: a duplicated row installed
-# the same server twice and reported it twice; a row whose mode was `select\r`
-# was accepted until the day a skill from it went missing, because the mode is
-# only read when there is something to fetch; a stray tab or a missing column
-# silently shifted every field one to the left.
+# Up front, because each of these otherwise fails late or not at all: a bad mode
+# is only read when something needs fetching, and a duplicate reads as converged.
 manifest_validate() {
   local bad problems=0
   local skills="$MANIFEST_DIR/skills.tsv" mcp="$MANIFEST_DIR/mcp.tsv" plugins="$MANIFEST_DIR/plugins.tsv"
 
-  # A CR survives into the last field and compares unequal to everything.
-  # No -U: GNU's flag only means anything on MS-DOS, and BSD grep gives the
-  # same letter a different job.
+  # A CR survives into the last field. No -U: BSD grep gives it another meaning.
   bad=$(grep -l $'\r' "$skills" "$mcp" "$plugins" 2>/dev/null || true)
   [[ -n "$bad" ]] && { problem "manifest has CRLF line endings: $(oneline "$bad")"; problems=1; }
 
@@ -69,8 +54,6 @@ manifest_validate() {
         | grep -vxE 'claude-code|codex|opencode' || true)
   [[ -n "$bad" ]] && { problem "mcp.tsv names agents with no installer: $(oneline "$bad")"; problems=1; }
 
-  # A duplicate is never intentional: the second row is either dead weight or a
-  # disagreement with the first, and both read as converged.
   bad=$(manifest_skill_names_raw | sort | uniq -d)
   [[ -n "$bad" ]] && { problem "skills.tsv declares a skill twice: $(oneline "$bad")"; problems=1; }
   bad=$(manifest_rows "$mcp" | cut -f1 | sort | uniq -d)
@@ -82,7 +65,7 @@ manifest_validate() {
   return 0
 }
 
-# manifest_skill_names_raw — declared names *with* duplicates, for validation.
+# With duplicates, for validation.
 manifest_skill_names_raw() {
   manifest_rows "$MANIFEST_DIR/skills.tsv" | cut -f2 | tr ',' '\n' \
     | sed 's/[[:space:]]//g' | grep -v '^$'

@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
-# lib/verify.sh — check the result against each agent's own configuration.
+# lib/verify.sh — read back what each agent reads, never a receipt this repo
+# wrote: a receipt proves the script ran, not that the host converged.
 #
-# Every check reads what the agent reads: the store on disk, the links in the
-# agent's skills directory, the server names in the agent's config file. Nothing
-# here consults a receipt this repo wrote, because a receipt only proves the
-# repo ran, not that the host converged.
-#
-# Under --dry-run the passes applied nothing, so each check would find exactly
-# what the plan is about to fix and report the whole plan back as failures. Each
-# list is therefore filtered through `unplanned` first, leaving the findings the
-# run would *not* have resolved — which is the only part worth reading before
-# committing to a real run. On a real run the ledger is inert and every check
-# reads the host.
+# Every list goes through `unplanned` first, so a dry run reports what it would
+# leave unfixed rather than repeating the plan back as failures.
 # shellcheck shell=bash
 
 verify_dry_run_notice() {
@@ -19,20 +11,13 @@ verify_dry_run_notice() {
   info "dry run: what follows is what this run would leave unfixed, not the host as it stands"
 }
 
-# verify_store — the store holds exactly the declared skills, and each one is
-# actually a skill. A directory with the right name is not enough: without a
-# SKILL.md no agent will load it, and counting directories reports that as
-# converged while every agent silently ignores the entry.
 verify_store() {
   local name missing unwanted broken invalid outside local_names stray=""
   missing=$(comm -23 <(manifest_skill_names) <(store_skill_names))
-  # What the lock records and the manifest does not want, split by whether the
-  # payload is still there. Both are pruned; naming them apart is the
-  # difference between a stale directory and a stale bookkeeping entry.
+  # The lock minus the manifest, split by whether the payload is still there.
   unwanted=$(comm -13 <(manifest_skill_names) <(lock_skill_names))
   local_names=$(store_local_names)
-  # Only a managed directory can be repaired: an empty one nobody fetched is
-  # somebody's own, and no pass will touch it.
+  # Only a fetched directory can be repaired; an empty one nobody fetched is theirs.
   invalid=$(comm -12 <(store_invalid_names) <(lock_skill_names))
 
   problem_list "store: declared skills missing" "$(unplanned "$missing" 'skill:')"
@@ -43,19 +28,12 @@ verify_store() {
   problem_list "store: directories with no SKILL.md, which no agent loads" \
     "$(unplanned "$(unplanned "$invalid" 'skill:')" 'unskill:')"
 
-  # Written here rather than fetched, so outside what the manifest is
-  # authoritative over. Named because it is the difference between "the store
-  # is the manifest" and "the store is the manifest plus your own work", and
-  # because a skill nobody can account for is worth seeing once a run.
+  # Outside what the manifest is authoritative over, and worth seeing once a run.
   [[ -n "$local_names" ]] \
     && info "not installed from a source, left alone: $(oneline "$local_names")"
 
-  # A declared entry substituted by a symlink out of the store serves whatever
-  # that path contains, under the declared name, while the lock still records
-  # the source it was fetched from. Reported rather than replaced: pointing a
-  # skill at a working copy is a real thing to do — it just should not be
-  # silent. No pass acts on it, so it survives into a dry run's output, which
-  # is the point.
+  # Serves whatever that path holds under the declared name. Reported, not
+  # replaced: pointing a skill at a working copy is a real thing to do.
   outside=""
   while IFS= read -r name; do
     [[ -n "$name" && -L "$AGENTS_STORE/$name" ]] || continue
@@ -64,8 +42,7 @@ verify_store() {
   done < <(manifest_skill_names)
   problem_list "store: entries symlinked out of the store" "$outside"
 
-  # Anything in the store that is not a skill directory is somebody's stray
-  # file. It is reported rather than removed: the store is shared with `skills`.
+  # Reported, not removed: the store is shared with `skills`.
   for name in "$AGENTS_STORE"/*; do
     [[ -e "$name" ]] || continue
     [[ -d "$name" ]] && continue
@@ -74,23 +51,17 @@ verify_store() {
   done
   problem_list "store: files that are not skill directories" "$stray"
 
-  # The count is what the store holds, which is the declared skills plus
-  # whatever was written here — not the number of rows in the manifest.
   broken="$missing$unwanted$invalid$outside$stray"
   [[ -z "$broken" ]] \
     && ok "store matches the manifest ($(store_skill_names | wc -l | tr -d ' ') skills)"
   return 0
 }
 
-# verify_mirrors — a mirrored skill must resolve to *its own* payload in the
-# store, not merely to something that has a SKILL.md. A link left pointing at a
-# different skill still resolves, so a presence check passes while the agent
-# loads the wrong skill under that name — the same mistake as checking an MCP
-# server by name instead of by target.
+# -ef against its own payload: a link to a different skill still resolves and
+# still has a SKILL.md, so a presence check passes while the agent loads the
+# wrong thing under that name.
 verify_mirrors() {
   local agent dir name link count total absent noskill elsewhere dangling want unfixed
-  # The same set the mirror pass owns, so what it does not link is not checked
-  # and what it does not sweep is.
   want=$(mirror_set)
   total=$(printf '%s\n' "$want" | grep -c .)
 
@@ -123,9 +94,7 @@ verify_mirrors() {
       "$(unplanned "$elsewhere" "mirror:$agent:")"
     unfixed="$unfixed$(unplanned "$elsewhere" "mirror:$agent:")"
 
-    # Only links the mirror pass does not own: a declared name that dangles is
-    # already in `absent` above, and reporting it twice makes one broken link
-    # look like two.
+    # Only links the mirror pass does not own; the rest are in `absent` already.
     while IFS= read -r link; do
       [[ -n "$link" && ! -e "$link" ]] || continue
       name=$(basename "$link")
@@ -135,9 +104,8 @@ verify_mirrors() {
     done < <(find "$dir" -mindepth 1 -maxdepth 1 -type l 2>/dev/null)
     problem_list "$agent: dangling links" "$(unplanned "$dangling" "unmirror:$agent:")"
 
-    # The tally describes the host now. On a dry run whose plan accounts for
-    # every gap, "0 of 4 resolve" is true and useless: it reads as a failure
-    # for work that has not been attempted yet.
+    # The tally describes the host now, which on a covered dry run reads as a
+    # failure for work not yet attempted.
     if ((count == total)); then
       ok "$agent: all $total skills resolve to a SKILL.md"
     elif [[ -n "$unfixed" || -z "${DRY_RUN:-}" ]]; then
@@ -145,8 +113,7 @@ verify_mirrors() {
     fi
   done
 
-  # OpenCode reads AGENTS_STORE itself; the check is that the store is on the
-  # path it globs, not that a mirror exists.
+  # OpenCode reads the store itself; the check is that it is on the path it globs.
   if [[ "$AGENTS_STORE" == "$HOME/.agents/skills" ]]; then
     ok "opencode: reads $AGENTS_STORE directly, no mirror required"
   else
@@ -155,9 +122,8 @@ verify_mirrors() {
   return 0
 }
 
-# verify_mcp — a row is satisfied only when the agent resolves the name to the
-# declared target. Presence of the name proves nothing: a server that kept its
-# name while its URL was overwritten is exactly the defect being checked for.
+# Presence of the name proves nothing: a server that kept its name while its URL
+# was overwritten is the defect being checked for.
 verify_mcp() {
   local row name transport target agents state unfixed missing wrong detail
   while IFS= read -r row; do
@@ -170,11 +136,8 @@ verify_mcp() {
     missing=${state%%|*}; state=${state#*|}
     wrong=${state%%|*}; detail=${state#*|}
 
-    # Whether the row was satisfied before any filtering: a row the run would
-    # fix is neither a problem nor a success, and the plan already named it.
+    # Before filtering: a row the run would fix is neither a problem nor a success.
     unfixed="$missing$wrong"
-    # Filtering is per agent, so a row half of which the run would fix reports
-    # only the other half.
     missing=$(mcp_unplanned "$name" "$missing")
     wrong=$(mcp_unplanned "$name" "$wrong")
 
@@ -185,7 +148,6 @@ verify_mcp() {
   return 0
 }
 
-# mcp_unplanned <server> <comma-separated agents> — those the run would not fix.
 mcp_unplanned() {
   local name="$1" agent out=""
   [[ -n "$2" ]] || return 0
