@@ -30,6 +30,55 @@ agent_flags() {
 # Every remote transport is a URL entry; only stdio names a command.
 mcp_expected_kind() { [[ "$1" == stdio ]] && printf 'stdio\n' || printf 'remote\n'; }
 
+# mcp_stdio_version <target> — the version a package spec pins, if any.
+# A leading @scope is not a version.
+mcp_stdio_version() {
+  case "$1" in
+    @*/*@*) printf '%s\n' "${1##*@}" ;;
+    @*/*)   ;;
+    *@*)    printf '%s\n' "${1##*@}" ;;
+  esac
+}
+
+# mcp_stdio_identity <target> — the package a stdio target runs.
+#
+# The runner is stripped before a target reaches here; what can remain is the
+# directory the binary was installed into and the version it was resolved at.
+# Neither is the server. A global install run straight from ~/.npm/…/bin and
+# `npx -y that-package@latest` are one MCP server started two ways.
+mcp_stdio_identity() {
+  local t="$1"
+  case "$t" in /*|~/*|./*|../*) t=${t##*/} ;; esac
+  case "$t" in
+    @*/*@*) t=${t%@*} ;;
+    @*/*)   ;;
+    *@*)    t=${t%@*} ;;
+  esac
+  printf '%s\n' "$t"
+}
+
+# mcp_stdio_matches <declared> <configured> — is the row satisfied?
+#
+# The manifest decides how strictly. A row that pins a version means it, and
+# anything else is wrong. `@latest`, or a bare package name, does not name a
+# version at all, so any invocation of that package satisfies it — including
+# the one already on the host. Rewriting a working local binary into an npx
+# call is churn: measured here, npx costs 0.2–0.6 s per launch over running
+# the installed binary, and buys nothing the manifest asked for.
+mcp_stdio_matches() {
+  local want="$1" got="$2" v
+  [[ "$want" == "$got" ]] && return 0
+  v=$(mcp_stdio_version "$want")
+  [[ -n "$v" && "$v" != latest ]] && return 1
+  [[ "$(mcp_stdio_identity "$want")" == "$(mcp_stdio_identity "$got")" ]]
+}
+
+# mcp_target_matches <transport> <declared> <configured> — one comparison for
+# either kind. A URL is compared whole: every character of it is the address.
+mcp_target_matches() {
+  if [[ "$1" == stdio ]]; then mcp_stdio_matches "$2" "$3"; else [[ "$2" == "$3" ]]; fi
+}
+
 # mcp_row_state <name> <transport> <target> <agents> — classify each agent as
 # ok / missing / wrong, and echo the two actionable lists.
 #
@@ -52,7 +101,7 @@ mcp_row_state() {
     actual=${rest%$'\t'*}; on=${rest##*$'\t'}
     # A server switched off is configured but does not run, so it is no more
     # satisfied than one pointing at the wrong URL.
-    if [[ "$kind" != "$want_kind" || "$actual" != "$target" ]]; then
+    if [[ "$kind" != "$want_kind" ]] || ! mcp_target_matches "$transport" "$target" "$actual"; then
       wrong="${wrong:+$wrong,}$agent"; detail="${detail:+$detail; }$agent → $kind:$actual"
     elif [[ "$on" == false ]]; then
       wrong="${wrong:+$wrong,}$agent"; detail="${detail:+$detail; }$agent → disabled"
@@ -117,29 +166,95 @@ mcp_report_project_scope() {
   return 0
 }
 
+# mcp_duplicates <agent> — "<name>\t<target>\t<row it duplicates>" for every
+# configured server whose target a manifest row already installs under another
+# name. This is the name collision from the other side: nothing is overwritten
+# and nothing needs repairing, the agent simply opens the same endpoint twice
+# and offers every tool on it twice.
+mcp_duplicates() {
+  local agent="$1" name got target dup
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    got=$(agent_mcp_target "$agent" "$name")
+    target=${got#*$'\t'}; target=${target%$'\t'*}
+    dup=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" \
+          | awk -F'\t' -v t="$target" '$3 == t { print $1; exit }')
+    [[ -n "$dup" ]] && printf '%s\t%s\t%s\n' "$name" "$target" "$dup"
+  done < <(comm -13 <(manifest_mcp_names) <(agent_mcp_names "$agent"))
+  return 0
+}
+
+# mcp_prune_duplicates — remove those, on request only.
+#
+# Opt-in because it deletes configuration this repo did not write. It is
+# narrow: only a server whose target a declared row already installs, so
+# nothing that provides something of its own is ever a candidate.
+#
+# It runs before the converge pass, so a declared server caught by the
+# substring rule below would be reinstalled in the same run rather than left
+# missing until the next one.
+mcp_prune_duplicates() {
+  [[ -n "${PRUNE_DUPLICATE_MCP:-}" ]] || return 0
+  local agent name target dup collide
+  for agent in claude-code codex opencode; do
+    while IFS=$'\t' read -r name target dup; do
+      [[ -n "$name" ]] || continue
+      # `add-mcp remove` matches `serverName.includes(query)`, so a name that
+      # is a substring of another configured one would take that with it, and
+      # -y accepts every match without asking.
+      collide=$(agent_mcp_names "$agent" | grep -F "$name" | grep -vxF "$name")
+      if [[ -n "$collide" ]]; then
+        warn "$agent: leaving '$name' — add-mcp removes on a substring match and would take $(oneline "$collide") too; remove it by hand"
+        continue
+      fi
+      delta "$agent: removing '$name', a second name for $dup's endpoint"
+      add_mcp_cli remove "$name" -g -a "$agent" -y
+      agent_mcp_invalidate
+    done < <(mcp_duplicates "$agent")
+  done
+}
+
 # mcp_report_undeclared — servers an agent has that the manifest does not.
 #
 # Not removed: Codex's node_repl is injected by the ChatGPT desktop app and
-# removing it would break the in-app browser. One case is called out rather
-# than merely listed — a second name for a target the manifest already
-# installs. That is the collision this repo exists to prevent, arriving from
-# the other direction: nothing is overwritten, the agent simply opens the same
-# endpoint twice and offers every tool on it twice.
+# removing it would break the in-app browser.
 mcp_report_undeclared() {
-  local agent name extra got target dup
+  local agent name extra dups
   for agent in claude-code codex opencode; do
+    dups=$(mcp_duplicates "$agent" | cut -f1)
+    while IFS=$'\t' read -r name target dup; do
+      [[ -n "$name" ]] || continue
+      warn "$agent: '$name' is a second name for $target, which the manifest installs as '$dup' — the agent connects twice and every tool appears twice; --prune-duplicate-mcp removes it"
+    done < <(mcp_duplicates "$agent")
+
     extra=$(comm -13 <(manifest_mcp_names) <(agent_mcp_names "$agent"))
     while IFS= read -r name; do
       [[ -n "$name" ]] || continue
-      got=$(agent_mcp_target "$agent" "$name")
-      target=${got#*$'\t'}; target=${target%$'\t'*}
-      dup=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" | awk -F'\t' -v t="$target" '$3 == t { print $1; exit }')
-      if [[ -n "$dup" ]]; then
-        warn "$agent: '$name' is a second name for $target, which the manifest installs as '$dup' — the agent connects twice and every tool appears twice"
-      else
-        info "$agent: '$name' configured but not declared (left alone)"
-      fi
+      grep -qxF "$name" <<< "$dups" && continue
+      info "$agent: '$name' configured but not declared (left alone)"
     done <<< "$extra"
   done
+  return 0
+}
+
+# mcp_report_variants — a row satisfied by a different invocation of the same
+# package. Nothing to repair, but the host is not running what the manifest
+# literally says, and that should not be silent.
+mcp_report_variants() {
+  local row name transport target agents agent got actual
+  while IFS= read -r row; do
+    transport=$(manifest_field "$row" 2); [[ "$transport" == stdio ]] || continue
+    name=$(manifest_field "$row" 1)
+    target=$(manifest_field "$row" 3)
+    agents=$(manifest_field "$row" 4)
+    while IFS= read -r agent; do
+      [[ -n "$agent" ]] || continue
+      got=$(agent_mcp_target "$agent" "$name"); [[ -n "$got" ]] || continue
+      actual=${got#*$'\t'}; actual=${actual%$'\t'*}
+      [[ "$actual" == "$target" ]] && continue
+      mcp_stdio_matches "$target" "$actual" || continue
+      info "$agent: '$name' runs $actual — the package $target names, started another way"
+    done < <(printf '%s\n' "$agents" | tr ',' '\n')
+  done < <(manifest_rows "$MANIFEST_DIR/mcp.tsv")
   return 0
 }

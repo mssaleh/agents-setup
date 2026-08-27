@@ -95,6 +95,86 @@ assert_absent "verify is satisfied once it is enabled" "$out" "disabled"
 err=$( { mcp_converge >/dev/null; } 2>&1 )
 assert_eq "a converged mcp pass writes nothing to stderr" "$err" ""
 
+# --- a stdio row names a package, not a way of starting it ---
+# The runner is already stripped; the directory a binary was installed into and
+# the version it resolved at are no more the server's identity than `npx` is.
+assert_eq "a global binary is the package it runs" \
+  "$(mcp_stdio_identity /Users/x/.npm/packages/bin/devtools-mcp)" "devtools-mcp"
+assert_eq "so is a versioned package spec" \
+  "$(mcp_stdio_identity devtools-mcp@1.2.3)" "devtools-mcp"
+assert_eq "a scope is not a version" \
+  "$(mcp_stdio_identity @acme/devtools-mcp)" "@acme/devtools-mcp"
+assert_eq "and a scoped spec still loses only the version" \
+  "$(mcp_stdio_identity @acme/devtools-mcp@2.0.0)" "@acme/devtools-mcp"
+
+assert_eq "@latest is satisfied by the installed binary" \
+  "$(mcp_stdio_matches 'devtools-mcp@latest' '/usr/local/bin/devtools-mcp' && echo yes)" "yes"
+assert_eq "and by any version of the package" \
+  "$(mcp_stdio_matches 'devtools-mcp@latest' 'devtools-mcp@0.4.1' && echo yes)" "yes"
+assert_eq "but never by a different package" \
+  "$(mcp_stdio_matches 'devtools-mcp@latest' '/usr/local/bin/other-mcp' || echo no)" "no"
+# A row that pins a version means it: that is the only reason to write one.
+assert_eq "a pinned row rejects another version" \
+  "$(mcp_stdio_matches 'devtools-mcp@1.2.3' 'devtools-mcp@2.0.0' || echo no)" "no"
+assert_eq "a pinned row rejects an unversioned binary" \
+  "$(mcp_stdio_matches 'devtools-mcp@1.2.3' '/usr/local/bin/devtools-mcp' || echo no)" "no"
+assert_eq "a pinned row accepts itself" \
+  "$(mcp_stdio_matches 'devtools-mcp@1.2.3' 'devtools-mcp@1.2.3' && echo yes)" "yes"
+
+# So a host already running the package is left alone, not rewritten.
+sandbox_set_mcp claude-code devtools stdio /opt/homebrew/bin/devtools-mcp
+agent_mcp_invalidate
+out=$(mcp_converge 2>&1)
+assert_eq "an installed binary is not rewritten" "$(grep -c '^~' <<< "$out")" "0"
+out=$( { verify_mcp; } 2>&1 )
+assert_absent "and verification is satisfied by it" "$out" "points elsewhere"
+out=$(mcp_report_variants 2>&1)
+assert_contains "what it actually runs is named" "$out" \
+  "claude-code: 'devtools' runs /opt/homebrew/bin/devtools-mcp"
+
+# A different package under the declared name is still the collision.
+sandbox_set_mcp claude-code devtools stdio /opt/homebrew/bin/impostor-mcp
+agent_mcp_invalidate
+out=$( { verify_mcp; } 2>&1 )
+assert_contains "a different package is rejected" "$out" "'devtools' in claude-code points elsewhere"
+mcp_converge >/dev/null 2>&1
+agent_mcp_invalidate
+assert_eq "and repaired to the declared package" \
+  "$(agent_mcp_target claude-code devtools)" "$(printf 'stdio\tdevtools-mcp@latest\ttrue')"
+
+# --- a second name for a declared endpoint ---
+sandbox_set_mcp claude-code docs-alias remote https://docs.example/mcp
+agent_mcp_invalidate
+assert_eq "the duplicate is found" "$(mcp_duplicates claude-code)" \
+  "$(printf 'docs-alias\thttps://docs.example/mcp\tdocs')"
+out=$(mcp_report_undeclared 2>&1)
+assert_contains "it is called out, not just listed" "$out" "is a second name for"
+assert_absent   "and not listed twice" "$out" "'docs-alias' configured but not declared"
+
+PRUNE_DUPLICATE_MCP="" mcp_prune_duplicates >/dev/null 2>&1
+agent_mcp_invalidate
+assert_contains "nothing is removed without the flag" "$(agent_mcp_names claude-code)" "docs-alias"
+
+out=$(PRUNE_DUPLICATE_MCP=1 mcp_prune_duplicates 2>&1)
+assert_contains "with the flag it is removed" "$out" "removing 'docs-alias'"
+agent_mcp_invalidate
+assert_absent   "the duplicate is gone"          "$(agent_mcp_names claude-code)" "docs-alias"
+assert_contains "the row it duplicated survives" "$(agent_mcp_names claude-code)" "docs"
+
+# `add-mcp remove` matches on a substring of the server name and -y accepts
+# every match, so removing 'doc' would take the declared 'docs' with it.
+sandbox_set_mcp claude-code doc remote https://docs.example/mcp
+agent_mcp_invalidate
+out=$(PRUNE_DUPLICATE_MCP=1 mcp_prune_duplicates 2>&1)
+assert_contains "a substring collision is refused, not risked" "$out" \
+  "leaving 'doc' — add-mcp removes on a substring match"
+agent_mcp_invalidate
+assert_contains "so the declared server it would have taken survives" \
+  "$(agent_mcp_names claude-code)" "docs"
+assert_contains "and the duplicate is left to remove by hand" \
+  "$(agent_mcp_names claude-code | grep -qxF doc && echo present)" "present"
+sandbox_del_mcp claude-code doc
+
 # Plugins: install what is listed, report what is not, never uninstall.
 out=$(plugins_converge 2>&1)
 assert_contains "registers the marketplace" "$out" "registering marketplace widgets"

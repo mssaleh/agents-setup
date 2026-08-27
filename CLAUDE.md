@@ -50,6 +50,12 @@ name-only check reports the collision above as converged, which it did for a who
 compare transport labels — the same SSE endpoint is `sse` to Claude Code, `remote` to OpenCode and
 `streamable_http` to Codex. Compare remote-versus-stdio and the URL.
 
+For stdio the target is the package, not the invocation. `npx` was already stripped on that
+reasoning; the install directory and the resolved version are the same kind of noise, so a global
+binary satisfies a row naming its package. Do not extend that to a row pinning a version — writing
+one is the only way to say the version matters. A URL is compared whole: every character of it is
+the address.
+
 A mirrored skill is the same problem wearing a different hat: a link to the wrong skill resolves
 and has a `SKILL.md`, so an existence check passes while the agent loads something else under that
 name. Compare with `-ef` against the skill's own payload in the store. Whenever a new check is
@@ -86,7 +92,11 @@ how many of those a person has, and asking them to list each one here would be a
 machine to declare what only one of them has. Read provenance off the host.
 
 MCP servers and plugins are reported and left: Codex's `node_repl` is injected by the ChatGPT
-desktop app, and removing it breaks the in-app browser.
+desktop app, and removing it breaks the in-app browser. `--prune-duplicate-mcp` is the one
+exception, and only because a second name for a declared endpoint provides nothing of its own.
+Before wiring any upstream removal, read how it matches: `add-mcp remove` takes a substring of the
+server name and `-y` accepts every match, so it will happily take a declared server along with the
+one you asked for.
 
 ## A dry run's job is the part it would *not* fix
 

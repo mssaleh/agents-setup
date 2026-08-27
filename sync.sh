@@ -12,7 +12,8 @@
 #   ./sync.sh --dry-run            report what would change, change nothing
 #   ./sync.sh --only skills        run one pass (skills | mcp | plugins | verify)
 #   ./sync.sh --update             also pull upstream changes into installed skills
-#   ./sync.sh --prune-plugin-cache also delete abandoned marketplace clones
+#   ./sync.sh --prune-plugin-cache  also delete abandoned marketplace clones
+#   ./sync.sh --prune-duplicate-mcp  also remove a second name for a declared endpoint
 #
 # Environment:
 #   AGENTS_HOME   shared skill store root      (default ~/.agents)
@@ -126,6 +127,7 @@ while (($#)); do
     --only)               ONLY="${2:-}"; shift ;;
     --only=*)             ONLY="${1#*=}" ;;
     --prune-plugin-cache) PRUNE_PLUGIN_CACHE=1 ;;
+    --prune-duplicate-mcp) PRUNE_DUPLICATE_MCP=1 ;;
     -h|--help)            usage ;;
     *)                    fail "unknown argument: $1" ;;
   esac
@@ -133,6 +135,7 @@ while (($#)); do
 done
 export DRY_RUN=${DRY_RUN:-}
 export PRUNE_PLUGIN_CACHE=${PRUNE_PLUGIN_CACHE:-}
+export PRUNE_DUPLICATE_MCP=${PRUNE_DUPLICATE_MCP:-}
 export UPDATE_SKILLS=${UPDATE_SKILLS:-}
 
 selected() { [[ -z "$ONLY" || "$ONLY" == "$1" ]]; }
@@ -158,7 +161,9 @@ pass_skills() {
 }
 
 pass_mcp() {
+  mcp_prune_duplicates
   mcp_converge
+  mcp_report_variants
   mcp_report_project_scope
   mcp_report_undeclared
 }

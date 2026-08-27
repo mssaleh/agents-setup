@@ -240,6 +240,31 @@ STUB
 #!/usr/bin/env bash
 # Write the named server into each requested agent's state.
 set -uo pipefail
+
+# `remove <query>` matches serverName.includes(query), lowercased, and -y takes
+# every match without asking — so a query that is a substring of another
+# configured name takes that with it. Reproduced exactly, because that is what
+# the caller has to guard against.
+if [[ "${1:-}" == remove ]]; then
+  shift; query="${1:-}"; shift || true
+  agents=""
+  while (($#)); do
+    case "$1" in
+      -a|--agent) agents="${agents:+$agents,}$2"; shift ;;
+      -g|-y|--global|--yes) ;;
+    esac
+    shift
+  done
+  IFS=',' read -ra list <<< "$agents"
+  for a in ${list[@]+"${list[@]}"}; do
+    f="$SANDBOX/state/mcp-$a"; [[ -f "$f" ]] || continue
+    awk -F'\t' -v q="$query" 'index(tolower($1), tolower(q)) == 0' "$f" > "$f.tmp"
+    mv "$f.tmp" "$f"
+  done
+  "$SANDBOX/bin/sandbox-render"
+  exit 0
+fi
+
 target=""; name=""; transport="stdio"; agents=""
 # -a is repeatable; add-mcp rejects a comma-joined list as "Invalid agents".
 while (($#)); do

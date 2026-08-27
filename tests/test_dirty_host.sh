@@ -49,8 +49,8 @@ printf 'orphan-one\norphan-two\n' >> "$SANDBOX/state/lock"   # payloads long gon
 # Links an agent kept after the payload moved.
 ln -sfn "$AGENTS_STORE/orphan-one" "$CODEX_HOME/skills/orphan-one"
 ln -sfn "$AGENTS_STORE/gone" "$CLAUDE_HOME/skills/gone"
-# A declared server installed by hand at a different target, and a second name
-# for one the manifest already installs.
+# The declared stdio server, already installed as a global binary rather than
+# through npx, and a second name for an endpoint the manifest already installs.
 sandbox_set_mcp claude-code devtools stdio /usr/local/bin/devtools-mcp
 sandbox_set_mcp claude-code docs-alias remote https://docs.example/mcp
 "$SANDBOX/bin/sandbox-render"
@@ -63,8 +63,17 @@ assert_contains "plans the missing skills"      "$out" "fetching alpha beta"
 assert_contains "plans the stale payload"       "$out" "removing undeclared skill leftover"
 assert_contains "plans the truncated payload"   "$out" "removing undeclared skill halfwritten"
 assert_contains "plans the orphan lock entry"   "$out" "removing undeclared skill orphan-one"
-assert_contains "plans the wrong-target server" "$out" "installing devtools into"
+assert_contains "plans the agents that lack the server" "$out" "installing devtools into codex,opencode"
 assert_contains "plans the plugin"              "$out" "installing plugin widget@widgets"
+
+# The row names a package, not an invocation. A global binary already running
+# that package satisfies it, and rewriting it into an npx call is churn — npx
+# costs a fifth of a second to half a second per launch over the installed
+# binary and buys nothing the manifest asked for.
+assert_absent   "a local binary of the declared package is not rewritten" \
+  "$out" "installing devtools into claude-code"
+assert_contains "and what it actually runs is named" "$out" \
+  "'devtools' runs /usr/local/bin/devtools-mcp"
 
 # Nothing the lock has never heard of is touched, whatever its state, and
 # whatever it is called. No row of any manifest mentions these.
@@ -102,9 +111,11 @@ assert_link "the skill written here is linked into codex"       "$CODEX_HOME/ski
 assert_missing "the truncated payload is gone" "$AGENTS_STORE/halfwritten"
 assert_missing "the stale link is gone"        "$CLAUDE_HOME/skills/gone"
 agent_mcp_invalidate
-assert_eq "the server points where the manifest says" \
-  "$(agent_mcp_target claude-code devtools)" "$(printf 'stdio\tdevtools-mcp@latest\ttrue')"
-assert_contains "the duplicate is left alone, not removed" "$(agent_mcp_names claude-code)" "docs-alias"
+assert_eq "the local binary is still the local binary" \
+  "$(agent_mcp_target claude-code devtools)" "$(printf 'stdio\t/usr/local/bin/devtools-mcp\ttrue')"
+assert_eq "and the agents that lacked it got the package" \
+  "$(agent_mcp_target codex devtools)" "$(printf 'stdio\tdevtools-mcp@latest\ttrue')"
+assert_contains "the duplicate is left alone without the flag" "$(agent_mcp_names claude-code)" "docs-alias"
 
 # --- and it settles ---
 out=$("$REPO_DIR/sync.sh" 2>&1); status=$?
@@ -114,5 +125,17 @@ assert_eq "the second run applies no deltas" "$(grep -c '^~' <<< "$out")" "0"
 assert_eq "what was written here survived" \
   "$([[ -f "$AGENTS_STORE/handmade/SKILL.md" && -d "$AGENTS_STORE/sketches" ]] && echo yes)" "yes"
 assert_contains "the duplicate is still called out" "$out" "is a second name for"
+assert_contains "and the flag that clears it is named" "$out" "--prune-duplicate-mcp"
+
+# --- the duplicate, on request ---
+out=$("$REPO_DIR/sync.sh" --prune-duplicate-mcp 2>&1); status=$?
+assert_eq       "the removing run exits clean" "$status" "0"
+assert_contains "it names what it removes" "$out" \
+  "claude-code: removing 'docs-alias', a second name for docs's endpoint"
+agent_mcp_invalidate
+assert_absent   "the duplicate is gone"    "$(agent_mcp_names claude-code)" "docs-alias"
+assert_contains "and the row it duplicated is not" "$(agent_mcp_names claude-code)" "docs"
+assert_eq "the row it duplicated still resolves" \
+  "$(agent_mcp_target claude-code docs)" "$(printf 'remote\thttps://docs.example/mcp\ttrue')"
 
 test_summary

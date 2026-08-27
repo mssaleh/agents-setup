@@ -119,11 +119,29 @@ The same collision arrives from the other direction as an undeclared server whos
 manifest row already installs — `copilotkit-mcp` beside `copilotkit`, both on the same SSE
 endpoint. Nothing is overwritten and nothing needs repairing; the agent simply opens the endpoint
 twice and offers every tool on it twice. It is called out by name rather than listed with the
-other undeclared servers, because it is the one that is actively costing you something.
+other undeclared servers, and `--prune-duplicate-mcp` removes it. Only a server whose target a
+declared row already installs is ever a candidate, so nothing that provides something of its own
+can be caught by it.
+
+That flag declines one case rather than risking it. `add-mcp remove <query>` matches
+`serverName.includes(query)` and `-y` accepts every match, so removing `doc` would take a declared
+`docs` with it; a name that is a substring of another configured one is reported for you to remove
+by hand. The pass also runs before the converge pass, so anything caught anyway comes back in the
+same run.
 
 Transport *labels* are not compared, because the agents disagree about them — the same SSE endpoint
 is `sse` to Claude Code, `remote` to OpenCode, and reported as `streamable_http` by Codex. What is
 compared is remote-versus-stdio and the URL or package itself, which every agent agrees on.
+
+For a stdio row the identity is the **package**, not the way it is started. The `npx` runner is
+stripped, and so are the directory a binary was installed into and the version it resolved at:
+`npx -y next-devtools-mcp@latest` and `~/.npm/packages/bin/next-devtools-mcp` are one server begun
+two ways, and rewriting a host that already works into the other form is churn — measured here,
+npx costs 0.2–0.6 s per launch over the installed binary and buys nothing the manifest asked for.
+A host that lacks the server still gets it installed exactly as the row is written.
+
+A row that pins a version is the exception, because pinning is the only reason to write one:
+`pkg@1.2.3` accepts nothing but `pkg@1.2.3`, while `pkg@latest` accepts any invocation of `pkg`.
 
 ### What the CLIs require
 
@@ -201,7 +219,9 @@ $EDITOR manifests/skills.tsv         # add the row
 - **Uninstall a plugin.** An installed plugin no row declares is reported and left. Removing
   somebody's deliberate install is not convergence.
 - **Remove an undeclared MCP server.** Codex's `node_repl` is injected by the ChatGPT desktop app;
-  removing it breaks the in-app browser.
+  removing it breaks the in-app browser. The one exception is opt-in: `--prune-duplicate-mcp`
+  clears a second name for an endpoint a declared row already installs, which by definition
+  provides nothing of its own.
 - **Rewrite a project-scoped Claude server.** It is reported, with the directory it is trapped in,
   so you can decide whether it should become a manifest row.
 - **Edit the skill lock.** That file belongs to `skills`; it is read, and every write to it is left
@@ -217,6 +237,7 @@ $EDITOR manifests/skills.tsv         # add the row
 | `--only skills\|mcp\|plugins\|verify` | Run one pass |
 | `--update` | Also pull upstream changes into installed skills |
 | `--prune-plugin-cache` | Also delete marketplace clones with no registered marketplace |
+| `--prune-duplicate-mcp` | Also remove an undeclared server whose target a declared row installs |
 
 | Variable | Default | Purpose |
 |---|---|---|
