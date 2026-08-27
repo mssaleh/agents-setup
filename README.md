@@ -82,9 +82,14 @@ package.
 
 **A stdio row names a package, not an invocation.** The `npx` runner is stripped, and so are the
 install directory and the resolved version: `npx -y next-devtools-mcp@latest` and
-`~/.npm/packages/bin/next-devtools-mcp` are one server started two ways, and npx costs 0.2–0.6 s
-per launch for nothing on a host that already has the binary. A row that *pins* a version accepts
-only that version.
+`~/.npm/packages/bin/next-devtools-mcp` are one server started two ways. Timed over a real MCP
+`initialize` handshake, npx costs 0.33 s against 0.11 s for the installed binary, and 4.95 s on a
+cold npx cache. A row that *pins* a version accepts only that version.
+
+An agent that lacks the row gets whatever the agents that have it already run, when they agree —
+otherwise adding an agent is what makes a host start one server two ways. The tradeoff of an
+absolute path is that it fails loudly if the package is uninstalled and no longer tracks upstream;
+the alternative is one agent paying the launch cost the others do not.
 
 **A skill you wrote needs no row.** The manifest is authoritative over what a source installed.
 `skills add` records a `source` and `sourceUrl` per entry, so the lock is what tells the two apart,

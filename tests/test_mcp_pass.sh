@@ -130,7 +130,38 @@ out=$( { verify_mcp; } 2>&1 )
 assert_absent "and verification is satisfied by it" "$out" "points elsewhere"
 out=$(mcp_report_variants 2>&1)
 assert_contains "what it actually runs is named" "$out" \
-  "claude-code: 'devtools' runs /opt/homebrew/bin/devtools-mcp"
+  "'devtools' runs /opt/homebrew/bin/devtools-mcp in claude-code"
+
+# --- an agent that lacks the row gets what the others already run ---
+sandbox_set_mcp claude-code devtools stdio /opt/homebrew/bin/devtools-mcp
+sandbox_set_mcp codex       devtools stdio /opt/homebrew/bin/devtools-mcp
+sandbox_del_mcp opencode devtools
+agent_mcp_invalidate
+assert_eq "the host's own spelling is what gets installed" \
+  "$(mcp_host_target devtools stdio 'devtools-mcp@latest' claude-code,codex,opencode)" \
+  "/opt/homebrew/bin/devtools-mcp"
+out=$(mcp_converge 2>&1)
+assert_contains "and the plan says so" "$out" \
+  "installing devtools into opencode as /opt/homebrew/bin/devtools-mcp, which the other agents already run"
+agent_mcp_invalidate
+assert_eq "so the host runs one server one way" \
+  "$(agent_mcp_target opencode devtools)" "$(printf 'stdio\t/opt/homebrew/bin/devtools-mcp\ttrue')"
+out=$(mcp_converge 2>&1)
+assert_eq "and it settles" "$(grep -c '^~' <<< "$out")" "0"
+
+# Agents that disagree give nothing to follow, so the row stands.
+sandbox_set_mcp codex devtools stdio devtools-mcp@0.9.0
+sandbox_del_mcp opencode devtools
+agent_mcp_invalidate
+assert_eq "a disagreement falls back to the manifest" \
+  "$(mcp_host_target devtools stdio 'devtools-mcp@latest' claude-code,codex,opencode)" \
+  "devtools-mcp@latest"
+assert_eq "a remote row is never inferred from the host" \
+  "$(mcp_host_target docs http 'https://docs.example/mcp' claude-code,opencode)" \
+  "https://docs.example/mcp"
+sandbox_set_mcp codex devtools stdio /opt/homebrew/bin/devtools-mcp
+mcp_converge >/dev/null 2>&1
+agent_mcp_invalidate
 
 # A different package under the declared name is still the collision.
 sandbox_set_mcp claude-code devtools stdio /opt/homebrew/bin/impostor-mcp
@@ -139,8 +170,8 @@ out=$( { verify_mcp; } 2>&1 )
 assert_contains "a different package is rejected" "$out" "'devtools' in claude-code points elsewhere"
 mcp_converge >/dev/null 2>&1
 agent_mcp_invalidate
-assert_eq "and repaired to the declared package" \
-  "$(agent_mcp_target claude-code devtools)" "$(printf 'stdio\tdevtools-mcp@latest\ttrue')"
+assert_eq "and repaired to what the rest of the host runs" \
+  "$(agent_mcp_target claude-code devtools)" "$(printf 'stdio\t/opt/homebrew/bin/devtools-mcp\ttrue')"
 
 # --- a second name for a declared endpoint ---
 sandbox_set_mcp claude-code docs-alias remote https://docs.example/mcp

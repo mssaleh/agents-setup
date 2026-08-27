@@ -51,7 +51,8 @@ assert_contains "plans the missing skills"      "$out" "fetching alpha beta"
 assert_contains "plans the stale payload"       "$out" "removing undeclared skill leftover"
 assert_contains "plans the truncated payload"   "$out" "removing undeclared skill halfwritten"
 assert_contains "plans the orphan lock entry"   "$out" "removing undeclared skill orphan-one"
-assert_contains "plans the agents that lack the server" "$out" "installing devtools into codex,opencode"
+assert_contains "plans the agents that lack the server" "$out" \
+  "installing devtools into codex,opencode as /usr/local/bin/devtools-mcp, which the other agents already run"
 assert_contains "plans the plugin"              "$out" "installing plugin widget@widgets"
 
 # The row names a package, not an invocation, so the installed binary satisfies
@@ -59,7 +60,7 @@ assert_contains "plans the plugin"              "$out" "installing plugin widget
 assert_absent   "a local binary of the declared package is not rewritten" \
   "$out" "installing devtools into claude-code"
 assert_contains "and what it actually runs is named" "$out" \
-  "'devtools' runs /usr/local/bin/devtools-mcp"
+  "'devtools' runs /usr/local/bin/devtools-mcp in claude-code"
 
 # Nothing the lock never fetched is touched. No manifest row mentions these.
 assert_absent   "a skill written here is not pruned"  "$out" "removing undeclared skill handmade"
@@ -96,8 +97,10 @@ assert_missing "the stale link is gone"        "$CLAUDE_HOME/skills/gone"
 agent_mcp_invalidate
 assert_eq "the local binary is still the local binary" \
   "$(agent_mcp_target claude-code devtools)" "$(printf 'stdio\t/usr/local/bin/devtools-mcp\ttrue')"
-assert_eq "and the agents that lacked it got the package" \
-  "$(agent_mcp_target codex devtools)" "$(printf 'stdio\tdevtools-mcp@latest\ttrue')"
+assert_eq "and the agents that lacked it run the same thing" \
+  "$(agent_mcp_target codex devtools)" "$(printf 'stdio\t/usr/local/bin/devtools-mcp\ttrue')"
+assert_eq "on every agent in the row" \
+  "$(agent_mcp_target opencode devtools)" "$(printf 'stdio\t/usr/local/bin/devtools-mcp\ttrue')"
 assert_contains "the duplicate is left alone without the flag" "$(agent_mcp_names claude-code)" "docs-alias"
 
 # --- and it settles ---

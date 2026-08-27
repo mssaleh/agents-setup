@@ -82,9 +82,27 @@ mcp_row_state() {
   printf '%s|%s|%s\n' "$missing" "$wrong" "$detail"
 }
 
+# When every agent that has the row starts the package the same way, the ones
+# that lack it get that rather than the manifest spelling. Disagreement falls back.
+mcp_host_target() {
+  local name="$1" transport="$2" target="$3" agents="$4" agent got actual seen=""
+  if [[ "$transport" == stdio ]]; then
+    while IFS= read -r agent; do
+      [[ -n "$agent" ]] || continue
+      got=$(agent_mcp_target "$agent" "$name")
+      [[ -n "$got" ]] || continue
+      actual=${got#*$'\t'}; actual=${actual%$'\t'*}
+      mcp_stdio_matches "$target" "$actual" || continue
+      [[ -z "$seen" ]] && { seen="$actual"; continue; }
+      [[ "$seen" == "$actual" ]] || { seen=""; break; }
+    done < <(printf '%s\n' "$agents" | tr ',' '\n')
+  fi
+  printf '%s\n' "${seen:-$target}"
+}
+
 # Only the agents that need work are named, so a settled host writes nothing.
 mcp_converge() {
-  local row name transport target agents state missing wrong detail flags f fix
+  local row name transport target agents state missing wrong detail flags f fix use
   while IFS= read -r row; do
     name=$(manifest_field "$row" 1)
     transport=$(manifest_field "$row" 2)
@@ -101,13 +119,18 @@ mcp_converge() {
       ok "$name correct in $agents"
       continue
     fi
-    delta "installing $name into $fix"
+    use=$(mcp_host_target "$name" "$transport" "$target" "$agents")
+    if [[ "$use" == "$target" ]]; then
+      delta "installing $name into $fix"
+    else
+      delta "installing $name into $fix as $use, which the other agents already run"
+    fi
     while IFS= read -r f; do [[ -n "$f" ]] && plan "mcp:$f:$name"; done \
       < <(printf '%s\n' "$fix" | tr ',' '\n')
     flags=(); while IFS= read -r f; do flags+=("$f"); done < <(agent_flags "$fix")
     case "$transport" in
-      stdio)    add_mcp_cli "$target" -n "$name" -g ${flags[@]+"${flags[@]}"} -y ;;
-      http|sse) add_mcp_cli "$target" -n "$name" -t "$transport" -g ${flags[@]+"${flags[@]}"} -y ;;
+      stdio)    add_mcp_cli "$use" -n "$name" -g ${flags[@]+"${flags[@]}"} -y ;;
+      http|sse) add_mcp_cli "$use" -n "$name" -t "$transport" -g ${flags[@]+"${flags[@]}"} -y ;;
       *)        fail "unknown transport '$transport' for $name in mcp.tsv" ;;
     esac
     agent_mcp_invalidate
@@ -191,20 +214,25 @@ mcp_report_undeclared() {
 # Satisfied by another invocation of the same package: nothing to repair, but the
 # host is not running what the row literally says.
 mcp_report_variants() {
-  local row name transport target agents agent got actual
+  local row name transport target agents agent got actual seen where
   while IFS= read -r row; do
     transport=$(manifest_field "$row" 2); [[ "$transport" == stdio ]] || continue
     name=$(manifest_field "$row" 1)
     target=$(manifest_field "$row" 3)
     agents=$(manifest_field "$row" 4)
+    seen=""; where=""
     while IFS= read -r agent; do
       [[ -n "$agent" ]] || continue
       got=$(agent_mcp_target "$agent" "$name"); [[ -n "$got" ]] || continue
       actual=${got#*$'\t'}; actual=${actual%$'\t'*}
       [[ "$actual" == "$target" ]] && continue
       mcp_stdio_matches "$target" "$actual" || continue
-      info "$agent: '$name' runs $actual — the package $target names, started another way"
+      [[ -n "$seen" && "$seen" != "$actual" ]] && { seen="various"; }
+      [[ -z "$seen" ]] && seen="$actual"
+      where="${where:+$where,}$agent"
     done < <(printf '%s\n' "$agents" | tr ',' '\n')
+    [[ -n "$where" ]] \
+      && info "'$name' runs $seen in $where — the package $target names, started another way"
   done < <(manifest_rows "$MANIFEST_DIR/mcp.tsv")
   return 0
 }
