@@ -14,6 +14,29 @@ No Python, no `jq`, no added runtime. Bash, coreutils, `awk`, `sed`, and the two
 through `npx`. A dependency this repo does not have is a dependency it never has to keep in step
 with, and every agent config here is a format `awk` reads without help.
 
+## Write for bash 3.2 and a BSD userland
+
+macOS ships bash 3.2 and BSD tools, and it is a supported host, so a GNU-only flag is a bug even
+when it works here. No `find -printf`, no `grep -P`, no `grep -U`, no bare `sed -i`, no `readlink
+-f` — use `-ef` for symlink identity. Name stdin explicitly where BSD needs it (`paste -sd, -`).
+
+The trap that does not announce itself: under `set -u`, bash 3.2 calls `"${a[@]}"` unbound when
+`a` is empty. Prefer a string built as you go; where an array is genuinely right, expand it as
+`${a[@]+"${a[@]}"}`. In a command substitution this fails quietly — the subshell dies, the value
+comes back empty, and on a converged host empty is the correct answer, so the only symptom is
+stderr noise nobody reads.
+
+`awk` needs POSIX character classes for `[[:space:]]` to mean what it says; the preflight in
+`sync.sh` proves that rather than assuming it. Run `bash tests/run.sh` under `bash:3.2` with a
+busybox userland before calling a change portable.
+
+## Both entry points, one script
+
+`sync.sh` is run from a checkout and streamed through `curl | bash`. Piped, `BASH_SOURCE` is empty
+and the manifests are not on disk yet, so nothing may read `${BASH_SOURCE[0]}` without a `:-`
+fallback, and anything reading the repo must go through `$REPO_DIR` — which the bootstrap sets to
+the unpacked payload. Keep the header comment block contiguous from line 2: `--help` prints it.
+
 ## The manifests are the argument
 
 A row in `manifests/` is the only place a skill, server or plugin is named. Nothing may pass a
@@ -61,9 +84,12 @@ ChatGPT desktop app, and removing it breaks the in-app browser.
 
 ## Close every child command's stdin
 
-These run inside `while read` loops and `npx` reads stdin, so an open descriptor lets the first
-iteration swallow the rest of the loop's input. `run()` in `lib/log.sh` does this for everything;
-keep new external calls going through it.
+Most run inside `while read` loops and `npx` reads stdin, so an open descriptor lets the first
+iteration swallow the rest of the loop's input. Streamed through `curl | bash` the stakes are
+higher: stdin is then the script bash has not finished reading, and a child that drains it takes
+the rest of the run with it. `run()` in `lib/log.sh` does this for everything; keep new external
+calls going through it, and give the bootstrap's own commands — which run before `run()` exists —
+their own `< /dev/null`.
 
 ## Comments
 

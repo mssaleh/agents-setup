@@ -173,11 +173,13 @@ printf '%s\n' "$*" >> "$SANDBOX/calls/npx"
 # The real npx reads stdin. Draining it here means a caller that does not close
 # stdin will lose the rest of its `while read` loop, exactly as in production.
 cat > /dev/null
-args=("$@"); [[ "${args[0]}" == "-y" ]] && args=("${args[@]:1}")
-pkg="${args[0]}"; args=("${args[@]:1}")
+# ${a[@]+…} rather than "${a[@]}": bash 3.2, the bash macOS ships, calls an
+# empty array unbound under `set -u`.
+args=("$@"); [[ "${args[0]:-}" == "-y" ]] && args=(${args[@]+"${args[@]:1}"})
+pkg="${args[0]:-}"; args=(${args[@]+"${args[@]:1}"})
 case "$pkg" in
-  skills@*)  exec "$SANDBOX/bin/stub-skills" "${args[@]}" ;;
-  add-mcp@*) exec "$SANDBOX/bin/stub-add-mcp" "${args[@]}" ;;
+  skills@*)  exec "$SANDBOX/bin/stub-skills" ${args[@]+"${args[@]}"} ;;
+  add-mcp@*) exec "$SANDBOX/bin/stub-add-mcp" ${args[@]+"${args[@]}"} ;;
 esac
 exit 0
 STUB
@@ -216,7 +218,7 @@ case "$cmd" in
       [[ -z "$names" ]] && names=$(whole_name "$source")
     fi
     IFS=',' read -ra list <<< "$names"
-    for n in "${list[@]}"; do
+    for n in ${list[@]+"${list[@]}"}; do
       [[ -n "$n" ]] || continue
       mkdir -p "$STORE/$n"
       printf -- '---\nname: %s\n---\n' "$n" > "$STORE/$n/SKILL.md"
@@ -224,7 +226,7 @@ case "$cmd" in
     done ;;
   remove)
     IFS=',' read -ra list <<< "$names"
-    for n in "${list[@]}"; do
+    for n in ${list[@]+"${list[@]}"}; do
       [[ -n "$n" ]] || continue
       rm -rf "${STORE:?}/$n"
       lock_del "$n"
@@ -254,9 +256,11 @@ while (($#)); do
 done
 kind=remote; [[ "$transport" == stdio ]] && kind=stdio
 IFS=',' read -ra list <<< "$agents"
-for a in "${list[@]}"; do
+for a in ${list[@]+"${list[@]}"}; do
   f="$SANDBOX/state/mcp-$a"; [[ -f "$f" ]] || continue
-  grep -vP "^\Q$name\E\t" "$f" > "$f.tmp" 2>/dev/null || grep -v "^$name	" "$f" > "$f.tmp" || true
+  # awk on the first field, not a grep pattern: a name is a literal, and BSD
+  # grep has no -P to make one out of it.
+  awk -F'\t' -v n="$name" '$1 != n' "$f" > "$f.tmp"
   mv "$f.tmp" "$f"
   printf '%s\t%s\t%s\n' "$name" "$kind" "$target" >> "$f"
 done
@@ -307,8 +311,8 @@ sandbox_set_project_mcp() {
 # bypassing add-mcp, to simulate configuration this repo did not write.
 sandbox_set_mcp() {
   local f="$SANDBOX/state/mcp-$1"
-  grep -v "^$2	" "$f" > "$f.tmp" 2>/dev/null || true
-  mv "$f.tmp" "$f" 2>/dev/null || true
+  awk -F'\t' -v n="$2" '$1 != n' "$f" > "$f.tmp"
+  mv "$f.tmp" "$f"
   printf '%s\t%s\t%s\n' "$2" "$3" "$4" >> "$f"
   "$SANDBOX/bin/sandbox-render"
 }
@@ -321,7 +325,7 @@ sandbox_rm() { [[ -n "${1:-}" && "$1" == */agents-setup-test.* ]] && rm -rf "$1"
 # simulating a config someone edited or a tool overwrote.
 sandbox_del_mcp() {
   local f="$SANDBOX/state/mcp-$1"
-  grep -v "^$2	" "$f" > "$f.tmp" 2>/dev/null || : > "$f.tmp"
+  awk -F'\t' -v n="$2" '$1 != n' "$f" > "$f.tmp"
   mv "$f.tmp" "$f"
   "$SANDBOX/bin/sandbox-render"
 }

@@ -17,10 +17,27 @@
 # current project.
 # shellcheck shell=bash
 
+# Every one of these is the same path on macOS and Linux: the agents and the
+# two CLIs derive them from the home directory, not from a platform config
+# location. Two of them are asymmetric on purpose. Claude Code and the skills
+# CLI both take the configuration home from CLAUDE_CONFIG_DIR, so the skills
+# directory follows it; `add-mcp` writes ~/.claude.json whatever that variable
+# says, so the config file does not.
 CLAUDE_CONFIG=${CLAUDE_CONFIG:-$HOME/.claude.json}
-CLAUDE_HOME=${CLAUDE_HOME:-$HOME/.claude}
+CLAUDE_HOME=${CLAUDE_HOME:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}
 CODEX_HOME=${CODEX_HOME:-$HOME/.codex}
-OPENCODE_CONFIG=${OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.jsonc}
+
+# OpenCode's global config is whichever of these two exists, and add-mcp
+# creates the .jsonc when neither does. Reading a fixed .jsonc on a host whose
+# file is .json finds no servers at all, which reads as "every row missing" and
+# reinstalls all of them on every run.
+opencode_config_path() {
+  local dir="$HOME/.config/opencode"
+  [[ -f "$dir/opencode.jsonc" ]] && { printf '%s\n' "$dir/opencode.jsonc"; return; }
+  [[ -f "$dir/opencode.json" ]]  && { printf '%s\n' "$dir/opencode.json"; return; }
+  printf '%s\n' "$dir/opencode.jsonc"
+}
+OPENCODE_CONFIG=${OPENCODE_CONFIG:-$(opencode_config_path)}
 
 MCP_TABLE_CACHE=""
 

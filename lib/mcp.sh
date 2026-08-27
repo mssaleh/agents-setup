@@ -34,30 +34,31 @@ mcp_expected_kind() { [[ "$1" == stdio ]] && printf 'stdio\n' || printf 'remote\
 # ok / missing / wrong, and echo the two actionable lists.
 #
 #   "<missing agents>|<wrong agents>|<what the wrong ones point at>"
+# The three lists are strings rather than arrays because a settled host leaves
+# all three empty, and bash 3.2 — the bash macOS ships — treats "${empty[@]}"
+# under `set -u` as an unbound variable. Joining as we go also drops the
+# subshell each `IFS=,` expansion needed.
 mcp_row_state() {
   local name="$1" transport="$2" target="$3" agents="$4"
-  local want_kind got kind rest actual on agent missing=() wrong=() detail=()
+  local want_kind got kind rest actual on agent missing="" wrong="" detail=""
   want_kind=$(mcp_expected_kind "$transport")
   while IFS= read -r agent; do
     [[ -n "$agent" ]] || continue
     got=$(agent_mcp_target "$agent" "$name")
     if [[ -z "$got" ]]; then
-      missing+=("$agent"); continue
+      missing="${missing:+$missing,}$agent"; continue
     fi
     kind=${got%%$'\t'*}; rest=${got#*$'\t'}
     actual=${rest%$'\t'*}; on=${rest##*$'\t'}
     # A server switched off is configured but does not run, so it is no more
     # satisfied than one pointing at the wrong URL.
     if [[ "$kind" != "$want_kind" || "$actual" != "$target" ]]; then
-      wrong+=("$agent"); detail+=("$agent → $kind:$actual")
+      wrong="${wrong:+$wrong,}$agent"; detail="${detail:+$detail; }$agent → $kind:$actual"
     elif [[ "$on" == false ]]; then
-      wrong+=("$agent"); detail+=("$agent → disabled")
+      wrong="${wrong:+$wrong,}$agent"; detail="${detail:+$detail; }$agent → disabled"
     fi
   done < <(printf '%s\n' "$agents" | tr ',' '\n')
-  printf '%s|%s|%s\n' \
-    "$(IFS=,; printf '%s' "${missing[*]}")" \
-    "$(IFS=,; printf '%s' "${wrong[*]}")" \
-    "$(IFS='; '; printf '%s' "${detail[*]}")"
+  printf '%s|%s|%s\n' "$missing" "$wrong" "$detail"
 }
 
 # mcp_converge — install where a server is absent, and reinstall where it points
@@ -66,7 +67,7 @@ mcp_row_state() {
 # Only the agents that need work are named, so a settled host performs no writes
 # and the delta count stays meaningful.
 mcp_converge() {
-  local row name transport target agents state missing wrong detail flags fix
+  local row name transport target agents state missing wrong detail flags f fix
   while IFS= read -r row; do
     name=$(manifest_field "$row" 1)
     transport=$(manifest_field "$row" 2)
@@ -84,10 +85,12 @@ mcp_converge() {
       continue
     fi
     delta "installing $name into $fix"
+    # ${flags[@]+"${flags[@]}"} rather than "${flags[@]}": bash 3.2 calls an
+    # empty array unbound under `set -u`.
     flags=(); while IFS= read -r f; do flags+=("$f"); done < <(agent_flags "$fix")
     case "$transport" in
-      stdio)    add_mcp_cli "$target" -n "$name" -g "${flags[@]}" -y ;;
-      http|sse) add_mcp_cli "$target" -n "$name" -t "$transport" -g "${flags[@]}" -y ;;
+      stdio)    add_mcp_cli "$target" -n "$name" -g ${flags[@]+"${flags[@]}"} -y ;;
+      http|sse) add_mcp_cli "$target" -n "$name" -t "$transport" -g ${flags[@]+"${flags[@]}"} -y ;;
       *)        fail "unknown transport '$transport' for $name in mcp.tsv" ;;
     esac
     agent_mcp_invalidate

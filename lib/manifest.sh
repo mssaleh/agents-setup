@@ -44,7 +44,9 @@ manifest_validate() {
   local skills="$MANIFEST_DIR/skills.tsv" mcp="$MANIFEST_DIR/mcp.tsv" plugins="$MANIFEST_DIR/plugins.tsv"
 
   # A CR survives into the last field and compares unequal to everything.
-  bad=$(grep -lU $'\r' "$skills" "$mcp" "$plugins" 2>/dev/null || true)
+  # No -U: GNU's flag only means anything on MS-DOS, and BSD grep gives the
+  # same letter a different job.
+  bad=$(grep -l $'\r' "$skills" "$mcp" "$plugins" 2>/dev/null || true)
   [[ -n "$bad" ]] && { problem "manifest has CRLF line endings: $(tr '\n' ' ' <<< "$bad")"; problems=1; }
 
   bad=$(manifest_rows "$skills" | awk -F'\t' 'NF != 3 { print NR": "NF" fields" }')

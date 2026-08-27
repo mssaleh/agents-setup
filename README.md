@@ -8,12 +8,29 @@ servers that exist in one agent and not another, servers overwritten by a name c
 that resolve in one agent and dangle in the next. This repo makes the manifests authoritative and
 converges every agent onto them.
 
+## Quick start
+
 ```bash
-git clone git@github.com:mssaleh/agents-setup.git
+# One-shot:
+curl -fsSL https://raw.githubusercontent.com/mssaleh/agents-setup/main/sync.sh | bash
+
+# Report what would change first:
+curl -fsSL https://raw.githubusercontent.com/mssaleh/agents-setup/main/sync.sh | bash -s -- --dry-run
+
+# On a Linux host that has wget but not curl:
+wget -qO- https://raw.githubusercontent.com/mssaleh/agents-setup/main/sync.sh | bash
+
+# Or clone and run:
+git clone https://github.com/mssaleh/agents-setup.git
 cd agents-setup
-./sync.sh --dry-run     # report what would change
-./sync.sh               # converge, then verify
+./sync.sh
 ```
+
+Piped in, the script downloads the manifests into a temporary directory, converges the host and
+deletes them again. Nothing on the machine points back at this repository; what is left is
+ordinary agent configuration under `$HOME`. Every flag works after `bash -s --`, and
+`REPO_ARCHIVE_URL` points the payload somewhere else — a `file://` archive needs neither network
+nor download tool.
 
 Re-running is safe and is the point: a converged host prints no deltas, writes nothing, and
 finishes in a few seconds.
@@ -97,8 +114,10 @@ Three properties of the upstream tools shape the code, and each fails quietly ra
   holds it. Asking for everything on every run rewrote all 35 payloads and reported no change, so
   only missing names are requested and refreshing is the separate `--update`.
 
-Every child command runs with stdin closed. These execute inside `while read` loops, and `npx`
+Every child command runs with stdin closed. Most execute inside `while read` loops, and `npx`
 reads stdin, so an open descriptor lets the first iteration swallow the rest of the loop's input.
+The same descriptor is what makes the one-liner safe: piped in, the script bash is still reading
+*is* stdin, and a child that drains it takes the rest of the run with it.
 
 ## The manifests
 
@@ -157,18 +176,46 @@ $EDITOR manifests/skills.tsv         # add the row
 |---|---|---|
 | `AGENTS_HOME` | `~/.agents` | Shared skill store root |
 | `AGENTS_LOCK` | `$XDG_STATE_HOME/skills/` or `~/.agents/` | Skill lock, following upstream's own rule |
-| `CLAUDE_HOME` | `~/.claude` | Claude Code state |
+| `CLAUDE_HOME` | `$CLAUDE_CONFIG_DIR` or `~/.claude` | Claude Code state |
 | `CODEX_HOME` | `~/.codex` | Codex state |
 | `SKILLS_CLI_VERSION`, `ADD_MCP_CLI_VERSION` | `latest` | Pin the npm CLIs |
+| `REPO_ARCHIVE_URL` | this repo's `main` tarball | Where the one-liner streams its payload from |
+| `REPO_URL` | — | Clone that instead of streaming an archive; needs `git` |
 
 ## Dependencies
 
 Bash, coreutils, `awk`, `sed`, and `npx` for the two upstream CLIs. Nothing else — no Python, no
-`jq`, no runtime this repo has to keep in step with.
+`jq`, no runtime this repo has to keep in step with. The one-liner additionally needs `tar` and
+either `curl` or `wget`; a clone needs neither. [`workspace-setup`](#relationship-to-workspace-setup)
+installs all of it.
 
-Linux and macOS. Nothing here needs bash 4, so the bash macOS actually ships is enough: no
-`mapfile`, no associative arrays, no `find -printf`, and symlink identity is tested with `-ef`
-rather than `readlink -f`.
+## macOS and Linux
+
+The same run on both, because the paths are the same on both: the agents and the two CLIs derive
+them from the home directory, not from a platform config location — `~/.claude.json`,
+`~/.codex/config.toml`, `~/.config/opencode/`, `~/.agents/skills`. Nothing here consults
+`~/Library/Application Support`, because nothing this repo manages is stored there.
+
+Two of those are conditional, and both are read from the tool that writes the file. The skills
+directory follows `CLAUDE_CONFIG_DIR`, which Claude Code and `skills` both honour; the config file
+does not, because `add-mcp` writes `~/.claude.json` whatever that variable says. OpenCode's global
+config is `opencode.jsonc` *or* `opencode.json`, whichever exists — reading a fixed `.jsonc` on a
+host that has the other finds no servers at all, which reads as "every row missing" and reinstalls
+them on every run.
+
+Nothing needs bash 4, so the bash macOS actually ships is enough — 3.2, released in 2006. That
+rules out `mapfile`, associative arrays, and `"${array[@]}"` for an array that might be empty:
+under `set -u`, bash 3.2 calls that unbound. It rules out GNU-only flags as well, so there is no
+`find -printf`, no `grep -P`, no `grep -U`, no bare `sed -i`, and symlink identity is tested with
+`-ef` rather than `readlink -f`.
+
+`awk` is the one dependency with a version floor. A pre-2019 one-true-awk reads `[[:space:]]` as
+the set of those literal characters, so the config parsers would misread rather than fail; every
+supported Linux and macOS 13 or later ships one that has POSIX character classes, and the preflight
+proves it rather than assuming it.
+
+The suite is run against bash 3.2.57 — the version macOS ships — with a busybox userland, which is
+a third implementation of every command used here and rejects a GNU-only flag the way BSD does.
 
 Agent configuration is read by parsing the files the agents write, not by shelling out to
 `claude mcp list` or `opencode mcp list`: those health-check every server, so they need the network
@@ -196,9 +243,33 @@ than in production.
 deltas, inject the drift symptoms this repo was written to fix, and assert they are repaired and the
 host settles again.
 
+`test_bootstrap.sh` runs the one-liner: it packs the working tree into an archive, serves it over
+`file://`, and hands the script to `bash -s --` on stdin, which is what `curl | bash` does. It
+asserts the payload is fetched, every pass runs, the host converges, a second piped run reports no
+deltas, and the temporary directory is gone afterwards. `--only skills --update` is in there for a
+reason: the refresh is the one child not already inside a redirected loop, so it is where an
+unclosed stdin would eat the rest of the streamed script.
+
+To run against the bash macOS ships:
+
+```bash
+docker run --rm -v "$PWD":/repo:ro bash:3.2 sh -c \
+  'apk add --no-cache gawk >/dev/null; cp -R /repo /w && cd /w && bash tests/run.sh'
+```
+
 ## Relationship to workspace-setup
 
 [`workspace-setup`](https://github.com/mssaleh/workspace-setup) provisions the host: packages,
 toolchains, dotfiles, SSH, containers, and the agent CLIs themselves. It changes rarely. This repo
-configures what those CLIs load, and changes whenever a skill is added. Run `workspace-setup` first
-on a new machine; run `./sync.sh` here whenever the manifests move.
+configures what those CLIs load, and changes whenever a skill is added. Both are one piped command,
+both are idempotent, and both leave nothing behind that points at their own repository.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mssaleh/workspace-setup/main/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mssaleh/agents-setup/main/sync.sh | bash
+```
+
+In that order on a new machine: `node` — and so `npx` — arrives with `workspace-setup`, along with
+the three agent CLIs whose configuration this repo then converges. Afterwards they run
+independently: `workspace-setup` when the host needs something, this one whenever the manifests
+move.

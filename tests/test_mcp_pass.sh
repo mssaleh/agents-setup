@@ -73,7 +73,12 @@ assert_eq "stdio target normalises past npx" "$(agent_mcp_target codex devtools)
 
 # --- a server present with the right URL but switched off is not satisfied ---
 sandbox_set_mcp codex devtools stdio devtools-mcp@latest
-sed -i "s|^args = \[ \"-y\", \"devtools-mcp@latest\" \]$|&\nenabled = false|" "$CODEX_HOME/config.toml"
+# awk into a temporary file, because BSD sed needs an argument after -i and
+# GNU sed refuses one.
+awk '{ print }
+     /^args = \[ "-y", "devtools-mcp@latest" \]$/ { print "enabled = false" }' \
+  "$CODEX_HOME/config.toml" > "$CODEX_HOME/config.toml.new"
+mv "$CODEX_HOME/config.toml.new" "$CODEX_HOME/config.toml"
 agent_mcp_invalidate
 out=$( { verify_mcp; } 2>&1 )
 assert_contains "verify rejects a disabled server" "$out" "codex → disabled"
@@ -82,6 +87,13 @@ assert_contains "converge reinstalls a disabled server" "$out" "installing devto
 agent_mcp_invalidate
 out=$( { verify_mcp; } 2>&1 )
 assert_absent "verify is satisfied once it is enabled" "$out" "disabled"
+
+# A settled row has nothing to say. This is where the three lists in
+# mcp_row_state are all empty at once, and bash 3.2 — the bash macOS ships —
+# calls an empty array unbound under `set -u`, so an array here would print
+# three errors per row on every macOS run while the value stayed correct.
+err=$( { mcp_converge >/dev/null; } 2>&1 )
+assert_eq "a converged mcp pass writes nothing to stderr" "$err" ""
 
 # Plugins: install what is listed, report what is not, never uninstall.
 out=$(plugins_converge 2>&1)

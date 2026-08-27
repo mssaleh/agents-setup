@@ -123,8 +123,10 @@ skills_install() {
     delta "$source: fetching $(tr '\n' ' ' <<< "$missing")"
     case "$mode" in
       select)
-        flags=(); while IFS= read -r f; do flags+=("$f"); done < <(skill_flags "$(paste -sd, <<< "$missing")")
-        skills_cli add "$source" "${flags[@]}" -a "$SKILL_STORE_AGENT" -g -y ;;
+        # `paste -` names stdin explicitly, which BSD paste requires; and
+        # ${flags[@]+…} keeps bash 3.2 from calling an empty array unbound.
+        flags=(); while IFS= read -r f; do flags+=("$f"); done < <(skill_flags "$(paste -sd, - <<< "$missing")")
+        skills_cli add "$source" ${flags[@]+"${flags[@]}"} -a "$SKILL_STORE_AGENT" -g -y ;;
       whole)
         skills_cli add "$source" -a "$SKILL_STORE_AGENT" -g -y ;;
       *) fail "unknown mode '$mode' for $source in skills.tsv" ;;
