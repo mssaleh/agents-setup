@@ -7,6 +7,11 @@
 #           the sync prunes anything in the store or the lock that is not listed here.
 #   mode    select — pass `--skill <skills>`; the repo carries more than we want.
 #           whole  — the source spec already names exactly what we want.
+#           keep   — hand-authored, source `-`. Never fetched, never pruned,
+#                    mirrored where it exists. A skill written by hand has no
+#                    source to fetch it from, so without this row prune deletes
+#                    it; and one that exists on a single machine must not be
+#                    reported missing on every other.
 #
 # Skill names are the `name:` in each SKILL.md, which is what `--skill` matches.
 # They are not always the repo's directory name (react-best-practices installs as
@@ -22,3 +27,4 @@ CopilotKit/CopilotKit	a2ui-renderer,channels-setup,copilotkit-agui,copilotkit-ch
 temporalio/skill-temporal-developer	temporal-developer	whole
 qdrant/skills/meta/qdrant-advisor	qdrant-advisor	whole
 livekit/agent-skills	livekit-agents	select
+-	apple-container-amd64	keep

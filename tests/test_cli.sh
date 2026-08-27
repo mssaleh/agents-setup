@@ -61,12 +61,26 @@ out=$("$REPO_DIR/sync.sh" --only skills --update 2>&1)
 assert_contains "--update calls upstream update" "$(cat "$SANDBOX/calls/npx")" "update -g -y"
 assert_contains "--update reports itself as a change" "$out" "refreshing every installed skill"
 
-# --- --dry-run reports work without doing it, and verify says which state it read ---
+# --- --dry-run reports work without doing it ---
 rm -rf "$AGENTS_STORE/alpha"
 out=$("$REPO_DIR/sync.sh" --dry-run 2>&1); status=$?
-assert_contains "dry run explains the verify output" "$out" "describe the host as it is now"
+assert_contains "dry run says what it is reporting" "$out" "would leave unfixed"
 assert_eq "dry run left the store empty" "$(store_skill_names | wc -l | tr -d ' ')" "0"
-assert_eq "dry run with an unmet manifest exits non-zero" "$status" "1"
+# Verification must not repeat the plan back as failures. Reporting every line
+# of it a second time under ✗ is what made an unconfigured host read as a
+# hundred-odd errors and exit non-zero when nothing was actually wrong with it.
+assert_absent   "dry run does not report what it would fix" "$out" "declared skills missing"
+assert_contains "dry run says the plan is complete" "$out" "the plan covers everything"
+assert_eq       "a dry run whose plan is complete exits zero" "$status" "0"
+
+# --- ...and still reports what the plan does not cover ---
+# Nothing removes a stray file from the store: it is shared with `skills`.
+: > "$AGENTS_STORE/NOTES.md"
+out=$("$REPO_DIR/sync.sh" --dry-run 2>&1); status=$?
+assert_contains "dry run reports what it cannot fix" "$out" "not skill directories (1): NOTES.md"
+assert_absent   "an incomplete plan does not claim completeness" "$out" "the plan covers everything"
+assert_eq       "an incomplete plan exits non-zero" "$status" "1"
+rm -f "$AGENTS_STORE/NOTES.md"
 
 # --- a satisfied host exits zero and says so ---
 "$REPO_DIR/sync.sh" >/dev/null 2>&1

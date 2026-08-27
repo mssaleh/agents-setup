@@ -115,12 +115,16 @@ skills_install() {
     names=$(manifest_field "$row" 2)
     mode=$(manifest_field "$row" 3)
 
+    # A keep row names a hand-authored skill; there is nothing to fetch it from.
+    [[ "$mode" == keep ]] && continue
+
     want=$(printf '%s\n' "$names" | tr ',' '\n' | sed '/^$/d' | sort -u)
     missing=$(comm -23 <(printf '%s\n' "$want") <(store_skill_names))
     [[ -n "$missing" ]] || continue
     fetched=1
 
-    delta "$source: fetching $(tr '\n' ' ' <<< "$missing")"
+    delta "$source: fetching $(oneline "$missing")"
+    while IFS= read -r f; do [[ -n "$f" ]] && plan "skill:$f"; done <<< "$missing"
     case "$mode" in
       select)
         # `paste -` names stdin explicitly, which BSD paste requires; and
@@ -133,6 +137,13 @@ skills_install() {
     esac
   done < <(manifest_rows "$MANIFEST_DIR/skills.tsv")
   ((fetched)) || ok "store has every declared skill"
+
+  # A kept skill is reported rather than fetched: it exists on the machine it
+  # was written on, and this is the only notice that the others do not have it.
+  local kept
+  kept=$(comm -23 <(manifest_kept_names) <(store_skill_names))
+  [[ -n "$kept" ]] && info "hand-authored, not on this host: $(oneline "$kept")"
+  return 0
 }
 
 # skills_refresh — pull upstream changes for everything already installed.
@@ -147,13 +158,20 @@ skills_refresh() {
 
 # skills_prune — remove anything the manifest does not declare, from both the
 # store and the lock. This is what keeps the manifest authoritative.
+#
+# store_invalid_names is in the union because a directory with no SKILL.md is
+# not a skill: it is absent from store_skill_names, so an undeclared one was
+# never a candidate for removal and verification reported it on every run with
+# nothing able to act on it.
 skills_prune() {
   local extra name
-  extra=$(comm -13 <(manifest_skill_names) <(cat <(store_skill_names) <(lock_skill_names) | sort -u))
+  extra=$(comm -13 <(manifest_skill_names) \
+                   <(cat <(store_skill_names) <(store_invalid_names) <(lock_skill_names) | sort -u))
   [[ -n "$extra" ]] || { ok "no undeclared skills"; return 0; }
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     delta "removing undeclared skill $name"
+    plan "unskill:$name"
     skills_forget "$name"
   done <<< "$extra"
 }
@@ -166,7 +184,14 @@ skills_prune() {
 # the copy silently shadows it. Anything undeclared is left alone — Codex ships
 # its own skills/.system/.
 skills_mirror() {
-  local agent dir target name link
+  local agent dir target name link mirrored
+  # The names this pass owns: everything declared, less a hand-authored skill
+  # that is not on this machine. Linking one of those would manufacture the
+  # dangling link the sweep then removes, on every host but the one it was
+  # written on. The sweep skips exactly this set, so the two halves cover every
+  # link between them and neither touches the other's.
+  mirrored=$(comm -23 <(manifest_skill_names) \
+                      <(comm -23 <(manifest_kept_names) <(store_skill_names)))
   for agent in $SKILL_MIRROR_AGENTS; do
     dir=$(agent_skills_dir "$agent") || { warn "no skills directory known for $agent"; continue; }
     [[ -d "$(dirname "$dir")" ]] || { info "$agent not installed here, skipping"; continue; }
@@ -189,21 +214,28 @@ skills_mirror() {
       else
         delta "$agent: linking $name"
       fi
+      plan "mirror:$agent:$name"
       run ln -sfn "$target" "$link"
-    done < <(manifest_skill_names)
+    done <<< "$mirrored"
 
     [[ -d "$dir" ]] || continue
     while IFS= read -r link; do
       [[ -n "$link" ]] || continue
       name=$(basename "$link")
+      # A name the loop above owns has just been pointed at the store. Sweeping
+      # it here too planned a link and its removal in the same run, and on a
+      # real run deleted the link whenever an install had failed — churn on top
+      # of a failure that was already reported.
+      grep -qxF "$name" <<< "$mirrored" && continue
       if [[ ! -e "$link" ]]; then
         delta "$agent: removing dangling link $name"
-        run rm -f "$link"
-      elif [[ "$link" -ef "$AGENTS_STORE/$name" ]] \
-        && ! manifest_skill_names | grep -qxF "$name"; then
+      elif [[ "$link" -ef "$AGENTS_STORE/$name" ]]; then
         delta "$agent: removing undeclared link $name"
-        run rm -f "$link"
+      else
+        continue
       fi
+      plan "unmirror:$agent:$name"
+      run rm -f "$link"
     done < <(find "$dir" -mindepth 1 -maxdepth 1 -type l 2>/dev/null)
   done
 }

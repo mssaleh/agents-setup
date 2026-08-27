@@ -85,6 +85,8 @@ mcp_converge() {
       continue
     fi
     delta "installing $name into $fix"
+    while IFS= read -r f; do [[ -n "$f" ]] && plan "mcp:$f:$name"; done \
+      < <(printf '%s\n' "$fix" | tr ',' '\n')
     # ${flags[@]+"${flags[@]}"} rather than "${flags[@]}": bash 3.2 calls an
     # empty array unbound under `set -u`.
     flags=(); while IFS= read -r f; do flags+=("$f"); done < <(agent_flags "$fix")
@@ -116,14 +118,27 @@ mcp_report_project_scope() {
 }
 
 # mcp_report_undeclared — servers an agent has that the manifest does not.
+#
 # Not removed: Codex's node_repl is injected by the ChatGPT desktop app and
-# removing it would break the in-app browser.
+# removing it would break the in-app browser. One case is called out rather
+# than merely listed — a second name for a target the manifest already
+# installs. That is the collision this repo exists to prevent, arriving from
+# the other direction: nothing is overwritten, the agent simply opens the same
+# endpoint twice and offers every tool on it twice.
 mcp_report_undeclared() {
-  local agent name extra
+  local agent name extra got target dup
   for agent in claude-code codex opencode; do
     extra=$(comm -13 <(manifest_mcp_names) <(agent_mcp_names "$agent"))
     while IFS= read -r name; do
-      [[ -n "$name" ]] && info "$agent: '$name' configured but not declared (left alone)"
+      [[ -n "$name" ]] || continue
+      got=$(agent_mcp_target "$agent" "$name")
+      target=${got#*$'\t'}; target=${target%$'\t'*}
+      dup=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" | awk -F'\t' -v t="$target" '$3 == t { print $1; exit }')
+      if [[ -n "$dup" ]]; then
+        warn "$agent: '$name' is a second name for $target, which the manifest installs as '$dup' — the agent connects twice and every tool appears twice"
+      else
+        info "$agent: '$name' configured but not declared (left alone)"
+      fi
     done <<< "$extra"
   done
   return 0

@@ -28,6 +28,7 @@ plugins_converge() {
       ok "plugin $plugin@$marketplace installed"
     else
       delta "installing plugin $plugin@$marketplace"
+      plan "plugin:$plugin@$marketplace"
       run claude plugin install "$plugin@$marketplace" || warn "could not install $plugin@$marketplace"
     fi
   done < <(manifest_rows "$MANIFEST_DIR/plugins.tsv")

@@ -78,9 +78,22 @@ that matters: a settled host prints no deltas.
 
 ## Never uninstall somebody's decision
 
-Skills and MCP servers are managed, so undeclared ones are pruned. Plugins are not: an installed
-plugin that no row declares is reported and left alone. Codex's `node_repl` is injected by the
-ChatGPT desktop app, and removing it breaks the in-app browser.
+Skills are managed, so undeclared ones are pruned — which means the manifest needs a way to say
+"this one is mine". That is what `keep` is for: a hand-authored skill belongs to no source repo,
+so without a row for it, prune deletes work nobody can get back. MCP servers and plugins are
+reported and left: Codex's `node_repl` is injected by the ChatGPT desktop app, and removing it
+breaks the in-app browser.
+
+## A dry run's job is the part it would *not* fix
+
+Verification reads the host, and under `--dry-run` nothing has been applied, so a literal reading
+repeats the whole plan back under ✗ — an unconfigured machine reported 131 failures and exited
+non-zero. Each pass records what it would do; verification subtracts it. When adding a pass, record
+its plan; when adding a check, filter it. Report per kind, not per name.
+
+Only under `--dry-run`. On a real run the work has happened and verification must read the result,
+never the ledger — trusting the ledger would make it a receipt, which is the thing this repo does
+not do.
 
 ## Close every child command's stdin
 

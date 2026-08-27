@@ -74,10 +74,31 @@ is `select\r` is only rejected on the day a skill from it goes missing.
    prune has already reduced to exactly the manifest.
 4. **mirror** — make `~/.claude/skills` and `$CODEX_HOME/skills` match the store: link what is
    declared, drop dangling and undeclared links, and replace a full copy that shadows a managed
-   skill. Undeclared local directories are left alone — Codex ships its own `skills/.system/`.
+   skill. The two halves split the names between them and neither touches the other's, so nothing
+   is linked and unlinked in the same run. Undeclared local directories are left alone — Codex
+   ships its own `skills/.system/`.
 5. **mcp** — install each row into the agents that lack it *or point somewhere else*.
 6. **plugins** — register the marketplace and install the allowlist; report anything else.
 7. **verify** — read every agent's own artifact back and exit non-zero if the manifest is unmet.
+
+### A dry run reports what it would *not* fix
+
+The passes above apply nothing under `--dry-run`, so verification necessarily reads the host as it
+stands — and reading it literally means repeating the entire plan back under ✗. An unconfigured
+machine reported a hundred and thirty-one failures and exited non-zero when nothing was wrong with
+it beyond never having been set up, and the three findings that did need a decision were somewhere
+in the middle of that.
+
+So each pass records what it would do, and verification subtracts it. What survives is the part no
+pass acts on: a stray file in the store, a skill symlinked out to a working copy, a project-scoped
+server, a plugin nobody declared. A dry run whose plan covers everything says so and exits zero.
+
+The ledger is consulted under `--dry-run` alone. On a real run the work has actually happened, and
+verification has to read the result rather than trust that the command it invoked did what it said.
+
+Findings are reported one line per kind, not one per name. Thirty-two missing skills are one line
+naming thirty-two skills, then the same names again for each agent that mirrors them was the
+difference between a report and a wall.
 
 ### Identity is the target, never the name
 
@@ -92,6 +113,12 @@ is checked with `-ef` against its own payload in the store.
 
 A server that is present at the right URL but carries `enabled = false` is not satisfied
 either: it is configured and it does not run.
+
+The same collision arrives from the other direction as an undeclared server whose target a
+manifest row already installs — `copilotkit-mcp` beside `copilotkit`, both on the same SSE
+endpoint. Nothing is overwritten and nothing needs repairing; the agent simply opens the endpoint
+twice and offers every tool on it twice. It is called out by name rather than listed with the
+other undeclared servers, because it is the one that is actively costing you something.
 
 Transport *labels* are not compared, because the agents disagree about them — the same SSE endpoint
 is `sse` to Claude Code, `remote` to OpenCode, and reported as `streamable_http` by Codex. What is
@@ -128,6 +155,19 @@ The `skills` column is authoritative, and lists names as they appear in the stor
 directory name (`skills/react-best-practices/` installs as `vercel-react-best-practices`). Take
 names from `npx skills add <source> -l`. `mode` is `select` when the repo carries more than you
 want, `whole` when the source spec already names exactly one skill.
+
+`mode` is `keep`, with source `-`, for a skill you wrote yourself:
+
+```
+-	apple-container-amd64	keep
+```
+
+It is never fetched, never pruned, and mirrored on the machines that have it. Both halves of that
+matter. A hand-authored skill belongs to no source repo, so there is no `select` row that can
+express it and prune deletes it as undeclared — which is what the manifest being authoritative
+means when the manifest has no way to say "this one is mine". And a skill written on one machine
+is legitimately absent from the others, so a `keep` row is reported as *not on this host* rather
+than as missing.
 
 `manifests/mcp.tsv` — `name`, `transport`, `target`, `agents`.
 

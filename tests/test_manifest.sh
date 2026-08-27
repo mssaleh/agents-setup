@@ -8,10 +8,16 @@ TEST_NAME=test_manifest
 . "$REPO_DIR/lib/manifest.sh"
 MANIFEST_DIR="$REPO_DIR/manifests"
 
-assert_eq "skills.tsv declares 35 skills" "$(manifest_skill_names | wc -l | tr -d ' ')" "35"
 assert_eq "skill names are unique" \
   "$(manifest_skill_names | wc -l | tr -d ' ')" \
   "$(manifest_skill_names | sort -u | wc -l | tr -d ' ')"
+# The declared set is the required set plus the hand-authored one, with nothing
+# in both: a name in both would be fetched and also exempted from being fetched.
+assert_eq "declared skills are required plus kept" \
+  "$(manifest_skill_names | wc -l | tr -d ' ')" \
+  "$(( $(manifest_required_names | wc -l) + $(manifest_kept_names | wc -l) ))"
+assert_eq "no name is both required and kept" \
+  "$(comm -12 <(manifest_required_names) <(manifest_kept_names) | wc -l | tr -d ' ')" "0"
 assert_eq "mcp.tsv declares 6 servers" "$(manifest_mcp_names | wc -l | tr -d ' ')" "6"
 assert_eq "plugins.tsv declares 1 plugin" \
   "$(manifest_rows "$MANIFEST_DIR/plugins.tsv" | wc -l | tr -d ' ')" "1"
@@ -23,8 +29,11 @@ assert_eq "comments stripped, URL fragment kept" \
 rm -f "$tmp"
 
 # Every skills row names a mode the installer implements.
-bad=$(manifest_rows "$MANIFEST_DIR/skills.tsv" | awk -F'\t' '$3 != "select" && $3 != "whole"')
+bad=$(manifest_rows "$MANIFEST_DIR/skills.tsv" | awk -F'\t' '$3 !~ /^(select|whole|keep)$/')
 assert_eq "every skills row uses a known mode" "$bad" ""
+# A keep row has nothing to fetch from; a source on one would be read by nobody.
+bad=$(manifest_rows "$MANIFEST_DIR/skills.tsv" | awk -F'\t' '$3 == "keep" && $1 != "-"')
+assert_eq "every keep row takes source '-'" "$bad" ""
 
 # Every mcp row names a transport the installer implements, and agents we support.
 bad=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" | awk -F'\t' '$2 !~ /^(stdio|http|sse)$/')
@@ -62,7 +71,12 @@ assert_contains "a skill declared twice is refused" "$out" "declares a skill twi
 cp "$REPO_DIR/manifests/skills.tsv" "$bad/skills.tsv"
 printf 'acme/pack\talpha\tsometimes\n' >> "$bad/skills.tsv"
 out=$(manifest_validate 2>&1)
-assert_contains "an unknown mode is refused" "$out" "mode must be select or whole"
+assert_contains "an unknown mode is refused" "$out" "mode must be select, whole or keep"
+
+cp "$REPO_DIR/manifests/skills.tsv" "$bad/skills.tsv"
+printf 'acme/pack\talpha\tkeep\n' >> "$bad/skills.tsv"
+out=$(manifest_validate 2>&1)
+assert_contains "a keep row with a source is refused" "$out" "keep rows take source '-'"
 
 cp "$REPO_DIR/manifests/skills.tsv" "$bad/skills.tsv"
 printf 'acme/pack\talpha\n' >> "$bad/skills.tsv"

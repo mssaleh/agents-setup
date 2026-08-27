@@ -189,7 +189,10 @@ else
   info "$DELTAS change(s) $([[ -n "$DRY_RUN" ]] && printf 'pending' || printf 'applied')"
 fi
 if ((PROBLEMS > 0)); then
-  warn "$PROBLEMS unresolved problem(s) above"
+  # A dry run has fixed nothing, so a problem here is one the plan does not
+  # cover — the only part of a dry run that needs a decision.
+  warn "$PROBLEMS problem(s) $([[ -n "$DRY_RUN" ]] && printf 'this run would not fix' || printf 'unresolved above')"
   exit 1
 fi
+[[ -n "$DRY_RUN" ]] && ((DELTAS > 0)) && ok "the plan covers everything verification found"
 exit 0
