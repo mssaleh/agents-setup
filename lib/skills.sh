@@ -87,6 +87,22 @@ lock_skill_names() {
   sed -n 's/^    "\([^"]*\)": {$/\1/p' "$AGENTS_LOCK" | sort
 }
 
+# store_all_names — every directory in the store, skill or not.
+store_all_names() { cat <(store_skill_names) <(store_invalid_names) | sort -u; }
+
+# store_local_names — store entries the lock does not claim.
+#
+# The lock is `skills`' own record of what it fetched, and it holds a source,
+# a sourceUrl and a skillPath for each. An entry it has never heard of was not
+# installed by it: somebody wrote that skill here by hand.
+#
+# This is what the manifest is authoritative *over*. Listing hand-authored
+# skills in the manifest instead would be asking every machine to declare what
+# only one of them has, and asking a person to edit this repo every time they
+# write a skill — the number of them is unbounded and their names are nobody
+# else's business. The host already knows which is which; read it off the host.
+store_local_names() { comm -23 <(store_all_names) <(lock_skill_names); }
+
 # skills_forget <name> — drop a skill from the store and the lock.
 #
 # `skills remove` enumerates the lock as well as the filesystem, so it removes
@@ -115,9 +131,6 @@ skills_install() {
     names=$(manifest_field "$row" 2)
     mode=$(manifest_field "$row" 3)
 
-    # A keep row names a hand-authored skill; there is nothing to fetch it from.
-    [[ "$mode" == keep ]] && continue
-
     want=$(printf '%s\n' "$names" | tr ',' '\n' | sed '/^$/d' | sort -u)
     missing=$(comm -23 <(printf '%s\n' "$want") <(store_skill_names))
     [[ -n "$missing" ]] || continue
@@ -137,13 +150,25 @@ skills_install() {
     esac
   done < <(manifest_rows "$MANIFEST_DIR/skills.tsv")
   ((fetched)) || ok "store has every declared skill"
-
-  # A kept skill is reported rather than fetched: it exists on the machine it
-  # was written on, and this is the only notice that the others do not have it.
-  local kept
-  kept=$(comm -23 <(manifest_kept_names) <(store_skill_names))
-  [[ -n "$kept" ]] && info "hand-authored, not on this host: $(oneline "$kept")"
   return 0
+}
+
+# mirror_set — the names each agent's skills directory should hold.
+#
+# Whatever the store holds: once install has run everything declared is in it,
+# and a skill somebody wrote sits beside them precisely so all three agents
+# load it. Under --dry-run install has not run, so what it said it would fetch
+# counts too — the real run links those, and a plan that stops short of them is
+# not the plan. On a real run `planned` is always false and this is the store.
+mirror_set() {
+  local name out
+  out=$(store_skill_names)
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    planned "skill:$name" && out="$out
+$name"
+  done < <(manifest_skill_names)
+  printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | sort -u
 }
 
 # skills_refresh — pull upstream changes for everything already installed.
@@ -156,17 +181,17 @@ skills_refresh() {
   skills_cli update -g -y || warn "skills update reported a failure"
 }
 
-# skills_prune — remove anything the manifest does not declare, from both the
-# store and the lock. This is what keeps the manifest authoritative.
+# skills_prune — remove what a source installed and the manifest no longer
+# declares. This is what keeps the manifest authoritative.
 #
-# store_invalid_names is in the union because a directory with no SKILL.md is
-# not a skill: it is absent from store_skill_names, so an undeclared one was
-# never a candidate for removal and verification reported it on every run with
-# nothing able to act on it.
+# The lock decides what is in scope, so the set is exactly what it records
+# minus what the manifest declares. That covers a payload still in the store
+# and an entry whose payload went years ago, and it leaves alone anything the
+# lock never fetched — which is the only safe reading of a directory this repo
+# did not put there.
 skills_prune() {
   local extra name
-  extra=$(comm -13 <(manifest_skill_names) \
-                   <(cat <(store_skill_names) <(store_invalid_names) <(lock_skill_names) | sort -u))
+  extra=$(comm -13 <(manifest_skill_names) <(lock_skill_names))
   [[ -n "$extra" ]] || { ok "no undeclared skills"; return 0; }
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
@@ -185,13 +210,10 @@ skills_prune() {
 # its own skills/.system/.
 skills_mirror() {
   local agent dir target name link mirrored
-  # The names this pass owns: everything declared, less a hand-authored skill
-  # that is not on this machine. Linking one of those would manufacture the
-  # dangling link the sweep then removes, on every host but the one it was
-  # written on. The sweep skips exactly this set, so the two halves cover every
-  # link between them and neither touches the other's.
-  mirrored=$(comm -23 <(manifest_skill_names) \
-                      <(comm -23 <(manifest_kept_names) <(store_skill_names)))
+  # The sweep below skips exactly this set, so the two halves cover every link
+  # between them and neither touches the other's — nothing is linked and
+  # unlinked in the same run.
+  mirrored=$(mirror_set)
   for agent in $SKILL_MIRROR_AGENTS; do
     dir=$(agent_skills_dir "$agent") || { warn "no skills directory known for $agent"; continue; }
     [[ -d "$(dirname "$dir")" ]] || { info "$agent not installed here, skipping"; continue; }
@@ -230,7 +252,8 @@ skills_mirror() {
       if [[ ! -e "$link" ]]; then
         delta "$agent: removing dangling link $name"
       elif [[ "$link" -ef "$AGENTS_STORE/$name" ]]; then
-        delta "$agent: removing undeclared link $name"
+        # Into the store, but the store no longer holds it under that name.
+        delta "$agent: removing stale link $name"
       else
         continue
       fi

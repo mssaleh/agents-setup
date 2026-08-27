@@ -24,19 +24,31 @@ verify_dry_run_notice() {
 # SKILL.md no agent will load it, and counting directories reports that as
 # converged while every agent silently ignores the entry.
 verify_store() {
-  local name missing extra broken invalid outside stray=""
-  # Required, not declared: a `keep` row names a hand-authored skill that lives
-  # on one machine, so its absence anywhere else is not a defect.
-  missing=$(comm -23 <(manifest_required_names) <(store_skill_names))
-  extra=$(comm -13 <(manifest_skill_names) <(store_skill_names))
-  invalid=$(store_invalid_names)
+  local name missing unwanted broken invalid outside local_names stray=""
+  missing=$(comm -23 <(manifest_skill_names) <(store_skill_names))
+  # What the lock records and the manifest does not want, split by whether the
+  # payload is still there. Both are pruned; naming them apart is the
+  # difference between a stale directory and a stale bookkeeping entry.
+  unwanted=$(comm -13 <(manifest_skill_names) <(lock_skill_names))
+  local_names=$(store_local_names)
+  # Only a managed directory can be repaired: an empty one nobody fetched is
+  # somebody's own, and no pass will touch it.
+  invalid=$(comm -12 <(store_invalid_names) <(lock_skill_names))
 
   problem_list "store: declared skills missing" "$(unplanned "$missing" 'skill:')"
-  problem_list "store: undeclared skills present" "$(unplanned "$extra" 'unskill:')"
-  problem_list "lock: undeclared entries" \
-    "$(unplanned "$(comm -13 <(manifest_skill_names) <(lock_skill_names))" 'unskill:')"
+  problem_list "store: undeclared skills present" \
+    "$(unplanned "$(comm -12 <(printf '%s\n' "$unwanted") <(store_all_names))" 'unskill:')"
+  problem_list "lock: undeclared entries with no payload" \
+    "$(unplanned "$(comm -23 <(printf '%s\n' "$unwanted") <(store_all_names))" 'unskill:')"
   problem_list "store: directories with no SKILL.md, which no agent loads" \
     "$(unplanned "$(unplanned "$invalid" 'skill:')" 'unskill:')"
+
+  # Written here rather than fetched, so outside what the manifest is
+  # authoritative over. Named because it is the difference between "the store
+  # is the manifest" and "the store is the manifest plus your own work", and
+  # because a skill nobody can account for is worth seeing once a run.
+  [[ -n "$local_names" ]] \
+    && info "not installed from a source, left alone: $(oneline "$local_names")"
 
   # A declared entry substituted by a symlink out of the store serves whatever
   # that path contains, under the declared name, while the lock still records
@@ -62,10 +74,9 @@ verify_store() {
   done
   problem_list "store: files that are not skill directories" "$stray"
 
-  # The count is what the store holds, not what the manifest names: a `keep`
-  # row for a skill written on another machine is declared and legitimately
-  # absent here, so counting rows would claim a payload that is not there.
-  broken="$missing$extra$invalid$outside$stray"
+  # The count is what the store holds, which is the declared skills plus
+  # whatever was written here — not the number of rows in the manifest.
+  broken="$missing$unwanted$invalid$outside$stray"
   [[ -z "$broken" ]] \
     && ok "store matches the manifest ($(store_skill_names | wc -l | tr -d ' ') skills)"
   return 0
@@ -78,10 +89,9 @@ verify_store() {
 # server by name instead of by target.
 verify_mirrors() {
   local agent dir name link count total absent noskill elsewhere dangling want unfixed
-  # A kept skill is mirrored where it exists and nowhere else, so it is checked
-  # only on the machine that has it.
-  want=$(cat <(manifest_required_names) \
-             <(comm -12 <(manifest_kept_names) <(store_skill_names)) | sort -u)
+  # The same set the mirror pass owns, so what it does not link is not checked
+  # and what it does not sweep is.
+  want=$(mirror_set)
   total=$(printf '%s\n' "$want" | grep -c .)
 
   for agent in $SKILL_MIRROR_AGENTS; do

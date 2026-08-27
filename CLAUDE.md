@@ -78,11 +78,15 @@ that matters: a settled host prints no deltas.
 
 ## Never uninstall somebody's decision
 
-Skills are managed, so undeclared ones are pruned — which means the manifest needs a way to say
-"this one is mine". That is what `keep` is for: a hand-authored skill belongs to no source repo,
-so without a row for it, prune deletes work nobody can get back. MCP servers and plugins are
-reported and left: Codex's `node_repl` is injected by the ChatGPT desktop app, and removing it
-breaks the in-app browser.
+The manifest is authoritative over what a source installed, and nothing else. The lock says which
+is which — `skills add` records a source and a sourceUrl per entry, so one it has never heard of
+was written by hand — and prune's set is the lock minus the manifest. Do not widen it to the
+filesystem: a store directory nobody fetched is somebody's own work, there is no upper bound on
+how many of those a person has, and asking them to list each one here would be asking every
+machine to declare what only one of them has. Read provenance off the host.
+
+MCP servers and plugins are reported and left: Codex's `node_repl` is injected by the ChatGPT
+desktop app, and removing it breaks the in-app browser.
 
 ## A dry run's job is the part it would *not* fix
 

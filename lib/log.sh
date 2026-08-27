@@ -40,7 +40,8 @@ problem() { PROBLEMS=$((PROBLEMS + 1)); agents_color red; printf '✗ %s\n' "$*"
 # names again for each agent that mirrors them. The count is what is read; the
 # names are what is acted on, so both stay.
 problem_list() {
-  local names="$2" n
+  local names n
+  names=$(printf '%s\n' "$2" | grep -v '^[[:space:]]*$')
   [[ -n "$names" ]] || return 0
   n=$(printf '%s\n' "$names" | grep -c .)
   problem "$1 ($n): $(oneline "$names")"

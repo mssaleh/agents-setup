@@ -69,14 +69,15 @@ is `select\r` is only rejected on the day a skill from it goes missing.
 
 1. **install** — for each source row, `skills add … -a universal` for the declared skills that are
    not in the store. Nothing else is requested.
-2. **prune** — `skills remove` anything in the store or the lock that no row declares.
+2. **prune** — `skills remove` what the lock records and no row declares. A store entry the lock
+   never fetched was written by hand and is out of scope.
 3. **refresh** — `--update` only: `skills update -g -y`, upstream's own update over the lock, which
    prune has already reduced to exactly the manifest.
-4. **mirror** — make `~/.claude/skills` and `$CODEX_HOME/skills` match the store: link what is
-   declared, drop dangling and undeclared links, and replace a full copy that shadows a managed
-   skill. The two halves split the names between them and neither touches the other's, so nothing
-   is linked and unlinked in the same run. Undeclared local directories are left alone — Codex
-   ships its own `skills/.system/`.
+4. **mirror** — make `~/.claude/skills` and `$CODEX_HOME/skills` match the store: link everything
+   the store holds, drop links to what it no longer holds, and replace a full copy that shadows a
+   managed skill. The two halves split the names between them and neither touches the other's, so
+   nothing is linked and unlinked in the same run. Local directories are left alone — Codex ships
+   its own `skills/.system/`.
 5. **mcp** — install each row into the agents that lack it *or point somewhere else*.
 6. **plugins** — register the marketplace and install the allowlist; report anything else.
 7. **verify** — read every agent's own artifact back and exit non-zero if the manifest is unmet.
@@ -150,24 +151,29 @@ The same descriptor is what makes the one-liner safe: piped in, the script bash 
 
 `manifests/skills.tsv` — `source`, `skills`, `mode`.
 
-The `skills` column is authoritative, and lists names as they appear in the store. A name is the
+The `skills` column is authoritative over what a source installed, and lists names as they appear
+in the store. A name is the
 `name:` in the skill's own `SKILL.md`, which is what `--skill` matches; it is not always the repo's
 directory name (`skills/react-best-practices/` installs as `vercel-react-best-practices`). Take
 names from `npx skills add <source> -l`. `mode` is `select` when the repo carries more than you
 want, `whole` when the source spec already names exactly one skill.
 
-`mode` is `keep`, with source `-`, for a skill you wrote yourself:
+### A skill you wrote needs no row
 
-```
--	apple-container-amd64	keep
-```
+The manifest is authoritative over what a source installed, and over nothing else. The lock draws
+the line: `skills add` records a `source`, a `sourceUrl` and a `skillPath` for everything it
+fetches, so an entry it has never heard of was written here by hand. Prune's set is exactly *what
+the lock records, minus what the manifest declares* — which covers a payload nobody wants any more
+and a bookkeeping entry whose payload went years ago, and leaves everything else alone.
 
-It is never fetched, never pruned, and mirrored on the machines that have it. Both halves of that
-matter. A hand-authored skill belongs to no source repo, so there is no `select` row that can
-express it and prune deletes it as undeclared — which is what the manifest being authoritative
-means when the manifest has no way to say "this one is mine". And a skill written on one machine
-is legitimately absent from the others, so a `keep` row is reported as *not on this host* rather
-than as missing.
+So a skill of your own sits in the store, gets mirrored into all three agents like any other, is
+reported once a run as `not installed from a source, left alone`, and is never anybody's to
+delete. You do not list it here, and there is no limit on how many you have — they are yours, they
+differ per machine, and the host already knows which is which.
+
+Being wrong in that direction is the point: a lock reset or a pre-lock install makes a managed
+skill look hand-written, and the cost is a stale directory nobody pruned rather than work nobody
+can get back.
 
 `manifests/mcp.tsv` — `name`, `transport`, `target`, `agents`.
 
