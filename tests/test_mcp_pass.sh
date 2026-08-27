@@ -130,7 +130,7 @@ out=$( { verify_mcp; } 2>&1 )
 assert_absent "and verification is satisfied by it" "$out" "points elsewhere"
 out=$(mcp_report_variants 2>&1)
 assert_contains "what it actually runs is named" "$out" \
-  "'devtools' runs /opt/homebrew/bin/devtools-mcp in claude-code"
+  "claude-code → /opt/homebrew/bin/devtools-mcp"
 
 # --- an agent that lacks the row gets what the others already run ---
 sandbox_set_mcp claude-code devtools stdio /opt/homebrew/bin/devtools-mcp
@@ -148,6 +148,24 @@ assert_eq "so the host runs one server one way" \
   "$(agent_mcp_target opencode devtools)" "$(printf 'stdio\t/opt/homebrew/bin/devtools-mcp\ttrue')"
 out=$(mcp_converge 2>&1)
 assert_eq "and it settles" "$(grep -c '^~' <<< "$out")" "0"
+
+# --- agents that all satisfy the row but start it differently ---
+sandbox_set_mcp claude-code devtools stdio /opt/homebrew/bin/devtools-mcp
+sandbox_set_mcp codex       devtools stdio devtools-mcp@latest
+sandbox_set_mcp opencode    devtools stdio devtools-mcp@latest
+agent_mcp_invalidate
+out=$(mcp_converge 2>&1)
+assert_eq "no row is unsatisfied, so nothing is installed" "$(grep -c '^~' <<< "$out")" "0"
+out=$(mcp_report_variants 2>&1)
+assert_contains "but the split is reported" "$out" "'devtools' is started differently by different agents"
+assert_contains "naming what each one runs" "$out" "claude-code → /opt/homebrew/bin/devtools-mcp"
+assert_contains "and saying nothing here repairs it" "$out" "pick one and install it into all of them"
+
+sandbox_set_mcp claude-code devtools stdio devtools-mcp@latest
+agent_mcp_invalidate
+out=$(mcp_report_variants 2>&1)
+assert_absent "agreement is not a split" "$out" "started differently"
+assert_absent "and matching the row exactly says nothing" "$out" "started another way"
 
 # Agents that disagree give nothing to follow, so the row stands.
 sandbox_set_mcp codex devtools stdio devtools-mcp@0.9.0
@@ -171,7 +189,7 @@ assert_contains "a different package is rejected" "$out" "'devtools' in claude-c
 mcp_converge >/dev/null 2>&1
 agent_mcp_invalidate
 assert_eq "and repaired to what the rest of the host runs" \
-  "$(agent_mcp_target claude-code devtools)" "$(printf 'stdio\t/opt/homebrew/bin/devtools-mcp\ttrue')"
+  "$(agent_mcp_target claude-code devtools)" "$(printf 'stdio\tdevtools-mcp@latest\ttrue')"
 
 # --- a second name for a declared endpoint ---
 sandbox_set_mcp claude-code docs-alias remote https://docs.example/mcp

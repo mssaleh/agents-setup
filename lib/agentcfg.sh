@@ -215,6 +215,36 @@ agent_skills_dir() {
   esac
 }
 
+# Servers Claude Code has switched off for one directory. A different key from
+# disabledMcpjsonServers, and invisible to a user-scope check: the server is
+# configured, healthy, and does not run.
+claude_disabled_in() {
+  [[ -f "$CLAUDE_CONFIG" ]] || return 0
+  awk -v want="$1" '
+    {
+      line = $0; n = length(line); i = 1
+      while (i <= n) {
+        c = substr(line, i, 1)
+        if (instr) {
+          if (c == "\\") { i += 2; continue }
+          if (c == "\"") { instr = 0; tok = buf; if (emit) print tok; i++; continue }
+          buf = buf c; i++; continue
+        }
+        if (c == "\"") { instr = 1; buf = ""; i++; continue }
+        if (c == ":") { key[depth] = tok; i++; continue }
+        if (c == "{") { depth++; i++; continue }
+        if (c == "}") { for (d = depth; d <= 5; d++) key[d] = ""; depth--; i++; continue }
+        if (c == "[") {
+          emit = (depth == 3 && key[1] == "projects" && key[2] == want && key[3] == "disabledMcpServers")
+          i++; continue
+        }
+        if (c == "]") { emit = 0; i++; continue }
+        i++
+      }
+    }
+  ' "$CLAUDE_CONFIG"
+}
+
 # Object keys at exactly that indentation.
 json_keys_at() {
   [[ -f "$1" ]] || return 0

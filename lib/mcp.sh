@@ -137,6 +137,18 @@ mcp_converge() {
   done < <(manifest_rows "$MANIFEST_DIR/mcp.tsv")
 }
 
+mcp_report_disabled_here() {
+  local name declared off=""
+  declared=$(manifest_mcp_names)
+  while IFS= read -r name; do
+    [[ -n "$name" ]] || continue
+    grep -qxF "$name" <<< "$declared" && off="${off:+$off,}$name"
+  done < <(claude_disabled_in "$PWD")
+  [[ -n "$off" ]] \
+    && info "claude: $off installed but switched off in $PWD — /mcp re-enables them"
+  return 0
+}
+
 # Reported, never edited: a project-scoped server may be deliberate, and the fix
 # is a manifest row.
 mcp_report_project_scope() {
@@ -214,25 +226,29 @@ mcp_report_undeclared() {
 # Satisfied by another invocation of the same package: nothing to repair, but the
 # host is not running what the row literally says.
 mcp_report_variants() {
-  local row name transport target agents agent got actual seen where
+  local row name transport target agents agent got actual seen split where held
   while IFS= read -r row; do
     transport=$(manifest_field "$row" 2); [[ "$transport" == stdio ]] || continue
     name=$(manifest_field "$row" 1)
     target=$(manifest_field "$row" 3)
     agents=$(manifest_field "$row" 4)
-    seen=""; where=""
+    seen=""; split=""; where=""; held=""
     while IFS= read -r agent; do
       [[ -n "$agent" ]] || continue
       got=$(agent_mcp_target "$agent" "$name"); [[ -n "$got" ]] || continue
       actual=${got#*$'\t'}; actual=${actual%$'\t'*}
-      [[ "$actual" == "$target" ]] && continue
       mcp_stdio_matches "$target" "$actual" || continue
-      [[ -n "$seen" && "$seen" != "$actual" ]] && { seen="various"; }
-      [[ -z "$seen" ]] && seen="$actual"
-      where="${where:+$where,}$agent"
+      held="${held:+$held,}$agent"
+      where="${where:+$where; }$agent → $actual"
+      if [[ -z "$seen" ]]; then seen="$actual"
+      elif [[ "$seen" != "$actual" ]]; then split=1
+      fi
     done < <(printf '%s\n' "$agents" | tr ',' '\n')
-    [[ -n "$where" ]] \
-      && info "'$name' runs $seen in $where — the package $target names, started another way"
+    if [[ -n "$split" ]]; then
+      warn "'$name' is started differently by different agents ($where) — same server, so nothing here repairs it; pick one and install it into all of them"
+    elif [[ -n "$seen" && "$seen" != "$target" ]]; then
+      info "'$name' runs $seen in $held — the package $target names, started another way"
+    fi
   done < <(manifest_rows "$MANIFEST_DIR/mcp.tsv")
   return 0
 }

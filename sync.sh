@@ -155,6 +155,7 @@ pass_mcp() {
   mcp_converge
   mcp_report_variants
   mcp_report_project_scope
+  mcp_report_disabled_here
   mcp_report_undeclared
 }
 

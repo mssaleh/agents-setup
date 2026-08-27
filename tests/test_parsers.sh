@@ -187,6 +187,33 @@ assert_contains "toml keeps a non-npx command"      "$got" "$(printf 'node_repl\
 assert_eq       "an env sub-table is not a server"  "$(grep -c 'node_repl.env' <<< "$got")" "0"
 assert_eq       "an unrelated table is not a server" "$(grep -c '^unrelated' <<< "$got")" "0"
 
+# Claude Code switches a server off per directory under disabledMcpServers —
+# a different key from disabledMcpjsonServers, and one a user-scope check misses.
+cat > "$work/disabled.json" <<'EOF'
+{
+  "projects": {
+    "/home/me/one": {
+      "disabledMcpjsonServers": [],
+      "disabledMcpServers": [
+        "docs",
+        "tools"
+      ]
+    },
+    "/home/me/two": {
+      "disabledMcpServers": [
+        "other"
+      ]
+    }
+  },
+  "mcpServers": {}
+}
+EOF
+CLAUDE_CONFIG="$work/disabled.json"
+assert_eq "reads the disabled list for one directory" \
+  "$(claude_disabled_in /home/me/one | tr '\n' ' ')" "docs tools "
+assert_eq "and not another directory's"  "$(claude_disabled_in /home/me/two | tr '\n' ' ')" "other "
+assert_eq "an unknown directory disables nothing" "$(claude_disabled_in /home/me/three)" ""
+
 # A missing file is empty, not an error.
 assert_eq "a missing json file yields nothing" "$(json_mcp_block "$work/nope.json" mcp)" ""
 assert_eq "a missing toml file yields nothing" "$(toml_mcp_servers "$work/nope.toml")" ""

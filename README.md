@@ -104,6 +104,15 @@ machine reported 131 failures and exited non-zero. Each pass records what it wou
 verification subtracts it; findings are grouped per kind, not per name. The ledger is consulted
 under `--dry-run` alone.
 
+**A declared server can be installed and still not run.** `enabled = false` in Codex or OpenCode is
+caught by the target check. Claude Code also switches servers off per directory, under
+`disabledMcpServers` — a different key from `disabledMcpjsonServers`, invisible to a user-scope
+check, and healthy in `claude mcp list` right up to the word `Disabled`. Those are named for the
+directory the run happens in.
+
+Agents that all satisfy a row but start it differently are reported too. Nothing here repairs that:
+the row is met on every one of them, and the manifest does not say which spelling wins.
+
 **A second name for a declared endpoint** — `copilotkit-mcp` beside `copilotkit` — is the collision
 from the other side. Nothing is overwritten; the agent opens the endpoint twice and offers every
 tool twice. `--prune-duplicate-mcp` removes it. That pass declines one case: `add-mcp remove` matches
