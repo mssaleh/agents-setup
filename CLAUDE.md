@@ -16,8 +16,9 @@ whatever you add before you finish; the same discipline applies to README.md.
 
 ## Bash only
 
-No Python, no `jq`, no added runtime. Bash, coreutils, `awk`, `sed`, and the two upstream npm CLIs
-through `npx`.
+No Python, no `jq`, no added runtime — in the repo and in anything you run while working on
+it, including one-off commands at the terminal. Bash, coreutils, `awk`, `sed`, and the two
+upstream npm CLIs through `npx`.
 
 ## Write for bash 3.2 and a BSD userland
 
