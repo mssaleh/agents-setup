@@ -72,6 +72,6 @@ assert_eq "no deltas after repair" "$(grep -c '^~' <<< "$out")" "0"
 printf 'acme/pack\talpha,beta\tselect\nacme/nonexistent\tphantom\tselect\n' > "$MANIFEST_DIR/skills.tsv"
 out=$("$REPO_DIR/sync.sh" --only verify 2>&1); status=$?
 assert_eq "verify fails on an unmet manifest" "$status" "1"
-assert_contains "verify names the missing skill" "$out" "declared skills missing (1): phantom"
+assert_contains "verify names the missing skill" "$out" "declared skills missing: phantom"
 
 test_summary

@@ -90,7 +90,7 @@ assert_absent "verify reports no problems" "$out" "✗"
 ln -sfn "$AGENTS_STORE/gamma" "$CODEX_HOME/skills/alpha"
 out=$(verify_mirrors 2>&1)
 assert_contains "verify rejects a link to the wrong skill" "$out" \
-  "codex: skills resolving to something other than the store (1): alpha -> "
+  "codex: skills resolving to something other than the store: alpha -> "
 out=$(skills_mirror 2>&1)
 assert_contains "mirror repoints it" "$out" "codex: repointing alpha at the store"
 out=$(verify_mirrors 2>&1)
@@ -102,7 +102,7 @@ mkdir -p "$CLAUDE_HOME/skills/alpha"
 printf -- '---\nname: alpha\n---\n' > "$CLAUDE_HOME/skills/alpha/SKILL.md"
 out=$(verify_mirrors 2>&1)
 assert_contains "verify rejects a shadowing local copy" "$out" \
-  "claude-code: skills resolving to something other than the store (1): alpha -> a local copy"
+  "claude-code: skills resolving to something other than the store: alpha -> a local copy"
 skills_mirror >/dev/null 2>&1
 out=$(verify_mirrors 2>&1)
 assert_absent "verify is satisfied once it is a link again" "$out" "✗"

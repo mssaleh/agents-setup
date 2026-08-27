@@ -6,14 +6,14 @@
 #              command line: three `codex mcp add copilotkit …` calls with three
 #              different URLs left Codex holding only the last one.
 #   transport  stdio — target is an npm package run under `npx -y`.
-#              http / sse — target is a URL.
+#              http / sse — target is a URL. Codex has no SSE client and POSTs
+#              to the URL regardless, so an `sse` row naming it is refused.
 #   agents     `add-mcp` agent arguments. Copilot CLI is deliberately absent; it
 #              has no binary on this host. OpenCode reads the same store, but its
 #              MCP config is separate and does need a row entry.
 
 next-devtools	stdio	next-devtools-mcp@latest	claude-code,codex,opencode
 temporal-docs	http	https://temporal.mcp.kapa.ai	claude-code,codex,opencode
-llamaparse	http	https://mcp.llamaindex.ai/mcp	claude-code,codex,opencode
 llamaindex-docs	http	https://developers.llamaindex.ai/mcp	claude-code,codex,opencode
-copilotkit	sse	https://mcp.copilotkit.ai/sse	claude-code,codex,opencode
+copilotkit	http	https://mcp.copilotkit.ai/mcp	claude-code,codex,opencode
 livekit-docs	http	https://docs.livekit.io/mcp/	claude-code,codex,opencode

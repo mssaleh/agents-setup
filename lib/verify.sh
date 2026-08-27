@@ -53,7 +53,7 @@ verify_store() {
 
   broken="$missing$unwanted$invalid$outside$stray"
   [[ -z "$broken" ]] \
-    && ok "store matches the manifest ($(store_skill_names | wc -l | tr -d ' ') skills)"
+    && ok "store matches the manifest"
   return 0
 }
 
@@ -107,7 +107,7 @@ verify_mirrors() {
     # The tally describes the host now, which on a covered dry run reads as a
     # failure for work not yet attempted.
     if ((count == total)); then
-      ok "$agent: all $total skills resolve to a SKILL.md"
+      ok "$agent: every skill resolves to a SKILL.md"
     elif [[ -n "$unfixed" || -z "${DRY_RUN:-}" ]]; then
       warn "$agent: only $count of $total skills resolve to a SKILL.md"
     fi

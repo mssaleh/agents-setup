@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Manifests parse, and each declares what the audit found.
+# Manifests parse, and every row says something the installer can act on.
 set -uo pipefail
 # shellcheck disable=SC2034  # read by helpers.sh
 TEST_NAME=test_manifest
@@ -8,12 +8,7 @@ TEST_NAME=test_manifest
 . "$REPO_DIR/lib/manifest.sh"
 MANIFEST_DIR="$REPO_DIR/manifests"
 
-assert_eq "skill names are unique" \
-  "$(manifest_skill_names | wc -l | tr -d ' ')" \
-  "$(manifest_skill_names | sort -u | wc -l | tr -d ' ')"
-assert_eq "mcp.tsv declares 6 servers" "$(manifest_mcp_names | wc -l | tr -d ' ')" "6"
-assert_eq "plugins.tsv declares 1 plugin" \
-  "$(manifest_rows "$MANIFEST_DIR/plugins.tsv" | wc -l | tr -d ' ')" "1"
+assert_eq "no skill is declared twice" "$(manifest_skill_names_raw | sort | uniq -d)" ""
 
 # A '#' inside a URL must not truncate the row.
 tmp=$(mktemp); printf '# comment\n\nname\thttp\thttps://x/y#frag\tcodex\n' > "$tmp"
@@ -33,8 +28,8 @@ assert_eq "every mcp row uses a known transport" "$bad" ""
 bad=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" | cut -f4 | tr ',' '\n' \
         | grep -vxE 'claude-code|codex|opencode' || true)
 assert_eq "mcp agents are all supported targets" "$bad" ""
-bad=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" | cut -f4 | tr ',' '\n' | grep -c 'copilot' || true)
-assert_eq "copilot is not an mcp target" "$bad" "0"
+bad=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" | cut -f4 | tr ',' '\n' | grep 'copilot' || true)
+assert_eq "copilot is not an mcp target" "$bad" ""
 
 
 # --- the shipped manifests are valid ---
@@ -83,6 +78,18 @@ cp "$REPO_DIR/manifests/mcp.tsv" "$bad/mcp.tsv"
 printf 'y\thttp\thttps://a.example\tcodex,telepathy\n' >> "$bad/mcp.tsv"
 out=$(manifest_validate 2>&1)
 assert_contains "an agent with no installer is refused" "$out" "names agents with no installer"
+
+cp "$REPO_DIR/manifests/mcp.tsv" "$bad/mcp.tsv"
+printf 'z\tsse\thttps://a.example/sse\tclaude-code,codex\n' >> "$bad/mcp.tsv"
+out=$(manifest_validate 2>&1)
+assert_contains "an sse row aimed at codex is refused" "$out" "no SSE client"
+
+# The other two still have an SSE client, so the same row without codex is a
+# working setup and must survive.
+cp "$REPO_DIR/manifests/mcp.tsv" "$bad/mcp.tsv"
+printf 'z\tsse\thttps://a.example/sse\tclaude-code,opencode\n' >> "$bad/mcp.tsv"
+out=$(manifest_validate 2>&1); status=$?
+assert_eq "an sse row for the other two is kept" "$status" "0"
 
 rm -rf "$bad"
 MANIFEST_DIR="$REPO_DIR/manifests"

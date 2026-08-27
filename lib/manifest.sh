@@ -50,6 +50,11 @@ manifest_validate() {
   bad=$(manifest_rows "$mcp" | awk -F'\t' '$2 !~ /^(stdio|http|sse)$/ { print $1" ("$2")" }')
   [[ -n "$bad" ]] && { problem "mcp.tsv transport must be stdio, http or sse: $bad"; problems=1; }
 
+  # Codex has no SSE client: it POSTs to a row's URL whatever the label says,
+  # and a GET-only endpoint answers 404 at startup rather than here.
+  bad=$(manifest_rows "$mcp" | awk -F'\t' '$2 == "sse" && index("," $4 ",", ",codex,") { print $1 }')
+  [[ -n "$bad" ]] && { problem "mcp.tsv sends an sse row to codex, which has no SSE client: $(oneline "$bad")"; problems=1; }
+
   bad=$(manifest_rows "$mcp" | cut -f4 | tr ',' '\n' | sort -u \
         | grep -vxE 'claude-code|codex|opencode' || true)
   [[ -n "$bad" ]] && { problem "mcp.tsv names agents with no installer: $(oneline "$bad")"; problems=1; }

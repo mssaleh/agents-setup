@@ -33,13 +33,12 @@ PROBLEMS=0
 problem() { PROBLEMS=$((PROBLEMS + 1)); agents_color red; printf '✗ %s\n' "$*" >&2; agents_color reset; }
 
 # One line per kind, not per name: a host far out of step otherwise prints the
-# same thirty-two names once per check.
+# same names once per check.
 problem_list() {
-  local names n
+  local names
   names=$(printf '%s\n' "$2" | grep -v '^[[:space:]]*$')
   [[ -n "$names" ]] || return 0
-  n=$(printf '%s\n' "$names" | grep -c .)
-  problem "$1 ($n): $(oneline "$names")"
+  problem "$1: $(oneline "$names")"
 }
 
 oneline() { printf '%s\n' "$1" | tr '\n' ' ' | sed 's/[[:space:]]*$//'; }

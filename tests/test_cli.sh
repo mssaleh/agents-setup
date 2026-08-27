@@ -74,7 +74,7 @@ assert_eq       "a dry run whose plan is complete exits zero" "$status" "0"
 # --- ...and still reports what the plan does not cover ---
 : > "$AGENTS_STORE/NOTES.md"
 out=$("$REPO_DIR/sync.sh" --dry-run 2>&1); status=$?
-assert_contains "dry run reports what it cannot fix" "$out" "not skill directories (1): NOTES.md"
+assert_contains "dry run reports what it cannot fix" "$out" "not skill directories: NOTES.md"
 assert_absent   "an incomplete plan does not claim completeness" "$out" "the plan covers everything"
 assert_eq       "an incomplete plan exits non-zero" "$status" "1"
 rm -f "$AGENTS_STORE/NOTES.md"

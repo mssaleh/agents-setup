@@ -54,7 +54,7 @@ only their own directories, so the store is symlinked into both.
 ## How a run proceeds
 
 The manifests are validated first — field counts, known modes and transports, known agent names, no
-duplicates, no CRLF. Then:
+duplicates, no CRLF, no `sse` row aimed at Codex. Then:
 
 1. **install** — `skills add … -a universal` for declared skills not in the store, and nothing else.
 2. **prune** — `skills remove` what the lock records and no row declares.
@@ -78,7 +78,8 @@ with `enabled = false` is not satisfied either.
 
 **Transport labels are not compared** — the same SSE endpoint is `sse` to Claude Code, `remote` to
 OpenCode, `streamable_http` to Codex. What is compared is remote-versus-stdio and the URL or
-package.
+package. Codex speaks only the last of those labels: it POSTs to a row's URL whatever the label
+says, so an `sse` row naming Codex is refused at preflight rather than left to 404 at startup.
 
 **A stdio row names a package, not an invocation.** The `npx` runner is stripped, and so are the
 install directory and the resolved version: `npx -y next-devtools-mcp@latest` and
