@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
 # tests/helpers.sh — build a throwaway host the passes can converge.
 #
-# No test reaches the network. `npx` and `claude` are replaced by stubs that
-# record their arguments and mutate the sandbox the way the real tools do, so a
-# test asserts on the resulting files rather than on what was called.
-#
-# The stubs keep their state in flat text files and re-render the real config
-# formats from it, byte-for-byte as the upstream tools write them: 2-space
-# indented JSON, single-line TOML arrays. The parsers under test read those
-# rendered files, so the layout they depend on is itself covered.
+# Skills and native agent stubs update temporary configuration without network
+# access. Readers inspect rendered JSON, JSONC, and TOML from flat fixture state.
 # shellcheck shell=bash
 
 REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -119,14 +113,14 @@ json_servers() {           # <state file> <indent> — "name": { … } members
     fi
     printf '    },\n'
   done < "$S/mcp-opencode"
-  printf '    "__end": {}\n  }\n}\n'
+  printf '  }\n}\n'
 } > "$H/.config/opencode/opencode.jsonc"
 
 { printf 'model = "test"\n'
   while IFS=$'\t' read -r name kind target; do
     [[ -n "$name" ]] || continue
     if [[ "$kind" == remote ]]; then
-      printf '\n[mcp_servers.%s]\ntype = "http"\nurl = "%s"\n' "$name" "$target"
+      printf '\n[mcp_servers.%s]\nurl = "%s"\n' "$name" "$target"
     else
       printf '\n[mcp_servers.%s]\ncommand = "npx"\nargs = [ "-y", "%s" ]\n' "$name" "$target"
     fi
@@ -179,7 +173,6 @@ args=("$@"); [[ "${args[0]:-}" == "-y" ]] && args=(${args[@]+"${args[@]:1}"})
 pkg="${args[0]:-}"; args=(${args[@]+"${args[@]:1}"})
 case "$pkg" in
   skills@*)  exec "$SANDBOX/bin/stub-skills" ${args[@]+"${args[@]}"} ;;
-  add-mcp@*) exec "$SANDBOX/bin/stub-add-mcp" ${args[@]+"${args[@]}"} ;;
 esac
 exit 0
 STUB
@@ -236,66 +229,58 @@ esac
 exit 0
 STUB
 
-  cat > "$root/bin/stub-add-mcp" <<'STUB'
+  cat > "$root/bin/stub-native-mcp" <<'STUB'
 #!/usr/bin/env bash
-# Write the named server into each requested agent's state.
 set -uo pipefail
-
-# `remove <query>` matches serverName.includes(query), lowercased, and -y takes
-# every match without asking — so a query that is a substring of another
-# configured name takes that with it. Reproduced exactly, because that is what
-# the caller has to guard against.
-if [[ "${1:-}" == remove ]]; then
-  shift; query="${1:-}"; shift || true
-  agents=""
-  while (($#)); do
-    case "$1" in
-      -a|--agent) agents="${agents:+$agents,}$2"; shift ;;
-      -g|-y|--global|--yes) ;;
-    esac
-    shift
-  done
-  IFS=',' read -ra list <<< "$agents"
-  for a in ${list[@]+"${list[@]}"}; do
-    f="$SANDBOX/state/mcp-$a"; [[ -f "$f" ]] || continue
-    awk -F'\t' -v q="$query" 'index(tolower($1), tolower(q)) == 0' "$f" > "$f.tmp"
-    mv "$f.tmp" "$f"
-  done
-  "$SANDBOX/bin/sandbox-render"
-  exit 0
-fi
-
-target=""; name=""; transport="stdio"; agents=""
-# -a is repeatable; add-mcp rejects a comma-joined list as "Invalid agents".
+agent="$1"; shift
+printf '%s\n' "$*" >> "$SANDBOX/calls/$agent"
+cat > /dev/null
+[[ "${1:-}" == mcp ]] || exit 1
+action="$2"; shift 2
+name=""; target=""; transport="stdio"; scope=""
 while (($#)); do
   case "$1" in
-    -n|--name) name="$2"; shift ;;
-    -t|--transport|--type) transport="$2"; shift ;;
-    -a|--agent)
-      [[ "$2" == *,* ]] && { echo "Invalid agents: $2" >&2; exit 1; }
-      agents="${agents:+$agents,}$2"; shift ;;
-    -g|-y|--global|--yes) ;;
-    *) [[ -z "$target" ]] && target="$1" ;;
+    --scope) scope="$2"; shift ;;
+    --transport) transport="$2"; shift ;;
+    --url) transport=http; target="$2"; shift ;;
+    --)
+      shift
+      [[ "${1:-}" == npx ]] && { shift; [[ "${1:-}" == -y ]] && shift; }
+      target="$*"; break ;;
+    -*) exit 1 ;;
+    *) if [[ -z "$name" ]]; then name="$1"; else target="$1"; fi ;;
   esac
   shift
 done
+[[ "$agent" != claude-code || "$scope" == user ]] || exit 1
+[[ -n "$name" ]] || exit 1
+f="$SANDBOX/state/mcp-$agent"
+case "$action" in
+  remove)
+    [[ "$agent" != opencode ]] || exit 1
+    awk -F'\t' -v n="$name" '$1 != n' "$f" > "$f.tmp"
+    mv "$f.tmp" "$f"
+    "$SANDBOX/bin/sandbox-render"
+    exit 0 ;;
+  add)
+    [[ -n "$target" ]] || exit 1
+    if [[ "$agent" == claude-code ]] && cut -f1 "$f" | grep -qxF "$name"; then
+      printf 'MCP server %s already exists in user config\n' "$name" >&2
+      exit 1
+    fi ;;
+  *) exit 1 ;;
+esac
 kind=remote; [[ "$transport" == stdio ]] && kind=stdio
-IFS=',' read -ra list <<< "$agents"
-for a in ${list[@]+"${list[@]}"}; do
-  f="$SANDBOX/state/mcp-$a"; [[ -f "$f" ]] || continue
-  # awk on the first field, not a grep pattern: a name is a literal, and BSD
-  # grep has no -P to make one out of it.
-  awk -F'\t' -v n="$name" '$1 != n' "$f" > "$f.tmp"
-  mv "$f.tmp" "$f"
-  printf '%s\t%s\t%s\n' "$name" "$kind" "$target" >> "$f"
-done
+awk -F'\t' -v n="$name" '$1 != n' "$f" > "$f.tmp"
+mv "$f.tmp" "$f"
+printf '%s\t%s\t%s\n' "$name" "$kind" "$target" >> "$f"
 "$SANDBOX/bin/sandbox-render"
-exit 0
 STUB
 
   cat > "$root/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 set -uo pipefail
+[[ "${1:-}" == mcp ]] && exec "$SANDBOX/bin/stub-native-mcp" claude-code "$@"
 printf '%s\n' "$*" >> "$SANDBOX/calls/claude"
 [[ "${1:-}" == plugin ]] || exit 0
 case "${2:-}" in
@@ -304,6 +289,20 @@ case "${2:-}" in
 esac
 "$SANDBOX/bin/sandbox-render"
 exit 0
+STUB
+
+  cat > "$root/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+exec "$SANDBOX/bin/stub-native-mcp" codex "$@"
+STUB
+  cat > "$root/bin/opencode" <<'STUB'
+#!/usr/bin/env bash
+[[ "${1:-}" == --pure ]] && shift
+if [[ "${1:-}" == debug && "${2:-}" == config ]]; then
+  cat "$OPENCODE_CONFIG"
+  exit
+fi
+exec "$SANDBOX/bin/stub-native-mcp" opencode "$@"
 STUB
 
   chmod +x "$root/bin/"*
@@ -333,7 +332,7 @@ sandbox_set_project_mcp() {
 }
 
 # sandbox_set_mcp <agent> <name> <kind> <target> — plant a server directly,
-# bypassing add-mcp, to simulate configuration this repo did not write.
+# bypassing the native commands, to simulate configuration this repo did not write.
 sandbox_set_mcp() {
   local f="$SANDBOX/state/mcp-$1"
   awk -F'\t' -v n="$2" '$1 != n' "$f" > "$f.tmp"

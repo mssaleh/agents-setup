@@ -163,7 +163,6 @@ cat > "$work/config.toml" <<'EOF'
 model = "test"
 
 [mcp_servers.off]
-type = "http"
 url = "https://off.example/mcp"
 enabled = false
 

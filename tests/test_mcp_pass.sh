@@ -11,7 +11,7 @@ trap 'sandbox_rm "$root"' EXIT
 export MANIFEST_DIR="$root/manifests"; mkdir -p "$MANIFEST_DIR"
 printf 'acme/pack\talpha\tselect\n' > "$MANIFEST_DIR/skills.tsv"
 { printf 'devtools\tstdio\tdevtools-mcp@latest\tclaude-code,codex,opencode\n'
-  printf 'docs\thttp\thttps://docs.example/mcp\tclaude-code,opencode\n'
+  printf 'docs\thttp\thttps://docs.example/mcp\tclaude-code,codex,opencode\n'
 } > "$MANIFEST_DIR/mcp.tsv"
 printf "claude-code\twidgets\tacme/widgets\twidget\n" > "$MANIFEST_DIR/plugins.tsv"
 
@@ -21,7 +21,7 @@ printf "claude-code\twidgets\tacme/widgets\twidget\n" > "$MANIFEST_DIR/plugins.t
 out=$(mcp_converge 2>&1)
 assert_contains "installs devtools into all three" "$out" "installing devtools into claude-code,codex,opencode"
 assert_eq "claude has both servers"   "$(agent_mcp_names claude-code | tr '\n' ' ')" "devtools docs "
-assert_eq "codex has only devtools"   "$(agent_mcp_names codex       | tr '\n' ' ')" "devtools "
+assert_eq "codex has both servers"   "$(agent_mcp_names codex       | tr '\n' ' ')" "devtools docs "
 assert_eq "opencode has both"         "$(agent_mcp_names opencode    | tr '\n' ' ')" "devtools docs "
 
 # Second run must write nothing: the manifest is checked against the agent config.
@@ -29,7 +29,7 @@ assert_eq "opencode has both"         "$(agent_mcp_names opencode    | tr '\n' '
 # substitution runs in a subshell, so the caller's counter never moves.
 out=$(mcp_converge 2>&1)
 assert_eq "second run makes no changes" "$(grep -c '^~' <<< "$out")" "0"
-assert_contains "second run reports presence" "$out" "docs correct in claude-code,opencode"
+assert_contains "second run reports presence" "$out" "docs correct in claude-code,codex,opencode"
 
 # One agent losing a server is repaired without touching the others.
 sandbox_del_mcp codex devtools
@@ -45,8 +45,7 @@ out=$(mcp_report_project_scope 2>&1)
 assert_contains "names the project-only server" "$out" "'stray' exists only under /tmp/proj"
 assert_eq "project config untouched" "$(claude_project_mcp)" "$(printf 'stray\t/tmp/proj')"
 
-# An undeclared server is reported, not removed: Codex's node_repl is injected
-# by the ChatGPT desktop app and removing it breaks the in-app browser.
+# Undeclared servers can belong to desktop integrations.
 sandbox_set_mcp codex node_repl stdio node-repl-pkg
 agent_mcp_invalidate
 out=$(mcp_report_undeclared 2>&1)
@@ -66,6 +65,13 @@ assert_contains "converge reinstalls the wrong one" "$out" "installing docs into
 assert_eq "target is repaired" "$(agent_mcp_target claude-code docs)" "$(printf 'remote\thttps://docs.example/mcp\ttrue')"
 out=$( { verify_mcp; } 2>&1 )
 assert_absent "verify is satisfied after repair" "$out" "points elsewhere"
+
+sandbox_set_mcp opencode docs remote https://WRONG.example/mcp
+agent_mcp_invalidate
+mcp_converge >/dev/null 2>&1
+agent_mcp_invalidate
+assert_eq "OpenCode replaces an incorrect target through its native add" \
+  "$(agent_mcp_target opencode docs)" "$(printf 'remote\thttps://docs.example/mcp\ttrue')"
 
 # A stdio row is matched on the package, not on the npx runner in front of it.
 assert_eq "stdio target normalises past npx" "$(agent_mcp_target codex devtools)" \
@@ -210,19 +216,25 @@ agent_mcp_invalidate
 assert_absent   "the duplicate is gone"          "$(agent_mcp_names claude-code)" "docs-alias"
 assert_contains "the row it duplicated survives" "$(agent_mcp_names claude-code)" "docs"
 
-# `add-mcp remove` matches on a substring of the server name and -y accepts
-# every match, so removing 'doc' would take the declared 'docs' with it.
+# Native removal uses an exact name.
 sandbox_set_mcp claude-code doc remote https://docs.example/mcp
 agent_mcp_invalidate
 out=$(PRUNE_DUPLICATE_MCP=1 mcp_prune_duplicates 2>&1)
-assert_contains "a substring collision is refused, not risked" "$out" \
-  "leaving 'doc' — add-mcp removes on a substring match"
+assert_contains "a duplicate with a shorter name is removed" "$out" "removing 'doc'"
 agent_mcp_invalidate
-assert_contains "so the declared server it would have taken survives" \
+assert_contains "the declared server survives exact-name removal" \
   "$(agent_mcp_names claude-code)" "docs"
-assert_contains "and the duplicate is left to remove by hand" \
-  "$(agent_mcp_names claude-code | grep -qxF doc && echo present)" "present"
-sandbox_del_mcp claude-code doc
+assert_eq "only the duplicate is removed" \
+  "$(agent_mcp_names claude-code | grep -cxF doc || true)" "0"
+
+sandbox_set_mcp opencode docs-alias remote https://docs.example/mcp
+agent_mcp_invalidate
+out=$(PRUNE_DUPLICATE_MCP=1 mcp_prune_duplicates 2>&1)
+assert_contains "OpenCode's missing native removal is reported" "$out" "no native MCP remove command"
+agent_mcp_invalidate
+assert_contains "the unsupported removal preserves configuration" \
+  "$(agent_mcp_names opencode)" "docs-alias"
+sandbox_del_mcp opencode docs-alias
 
 # Plugins: install what is listed, report what is not, never uninstall.
 out=$(plugins_converge 2>&1)
@@ -238,5 +250,17 @@ assert_contains "undeclared plugin is not uninstalled" "$(claude_installed_plugi
 
 out=$( { verify_mcp; verify_plugins; } 2>&1 )
 assert_absent "verification finds no problems" "$out" "✗"
+
+# A failed native config read must stop reconciliation before any writes.
+saved_opencode_config="$OPENCODE_CONFIG"
+export OPENCODE_CONFIG="$root/unavailable.json"
+agent_mcp_invalidate
+out=$(bash "$REPO_DIR/sync.sh" --only mcp 2>&1); status=$?
+assert_eq "an unavailable effective config exits nonzero" "$status" "1"
+assert_contains "the native config read failure is reported" "$out" \
+  "cannot read effective agent configuration"
+assert_absent "a failed read does not plan installations" "$out" "installing"
+export OPENCODE_CONFIG="$saved_opencode_config"
+agent_mcp_invalidate
 
 test_summary

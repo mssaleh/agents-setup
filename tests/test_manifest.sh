@@ -23,8 +23,7 @@ assert_eq "every skills row uses a known mode" "$bad" ""
 # Every mcp row names a transport the installer implements, and agents we support.
 bad=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" | awk -F'\t' '$2 !~ /^(stdio|http|sse)$/')
 assert_eq "every mcp row uses a known transport" "$bad" ""
-# The agents column is a closed set: an unknown token would be silently dropped
-# by add-mcp, and Copilot CLI is deliberately excluded (no binary on this host).
+# The agents column names only supported native installers.
 bad=$(manifest_rows "$MANIFEST_DIR/mcp.tsv" | cut -f4 | tr ',' '\n' \
         | grep -vxE 'claude-code|codex|opencode' || true)
 assert_eq "mcp agents are all supported targets" "$bad" ""

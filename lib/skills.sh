@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lib/skills.sh — the shared skill store, mirrored into the agents that cannot
-# read it. Claude Code reads ~/.claude/skills, Codex $CODEX_HOME/skills,
-# OpenCode ~/.agents/skills directly.
+# read it. Claude Code reads ~/.claude/skills. Codex and OpenCode also read
+# ~/.agents/skills; the Codex mirror supports its legacy skills directory.
 #
 # `skills add -a <agent>` writes the store only when that agent's skillsDir is
 # `.agents/skills` — true for codex and opencode, not for claude-code, which

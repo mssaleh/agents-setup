@@ -20,7 +20,8 @@ vercel/next.js	next-cache-components-adoption,next-cache-components-optimizer,ne
 shadcn/ui	shadcn	select
 pydantic/skills	building-pydantic-ai-agents,pydantic,pydantic-ai-harness	select
 run-llama/llamaparse-agent-skills	liteparse,llamacloud-index,llamaparse	select
-CopilotKit/CopilotKit	a2ui-renderer,channels-setup,copilotkit-agui,copilotkit-channels,copilotkit-contribute,copilotkit-debug,copilotkit-develop,copilotkit-integrations,copilotkit-self-update,copilotkit-setup,copilotkit-upgrade,inspector-docs,react-core,runtime,setup-slack-channel	select
+CopilotKit/CopilotKit	channels-setup,copilotkit,copilotkit-channels,copilotkit-cli,inspector-docs,setup-slack-channel	select
 temporalio/skill-temporal-developer	temporal-developer	whole
 qdrant/skills/meta/qdrant-advisor	qdrant-advisor	whole
-livekit/agent-skills	livekit-agents	select
+livekit/agent-skills	building-livekit-agents,debugging-livekit-agents,operating-livekit-agents,reading-livekit-docs,running-livekit-simulations,testing-livekit-agents,writing-livekit-scenarios	select
+typesafe-ai/skills	typesafe-ai	select

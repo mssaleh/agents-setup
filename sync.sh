@@ -19,7 +19,7 @@
 #   AGENTS_HOME   shared skill store root      (default ~/.agents)
 #   CLAUDE_HOME   Claude Code state            (default $CLAUDE_CONFIG_DIR or ~/.claude)
 #   CODEX_HOME    Codex state                  (default ~/.codex)
-#   SKILLS_CLI_VERSION / ADD_MCP_CLI_VERSION   pin the npm CLIs (default latest)
+#   SKILLS_CLI_VERSION   select the skills CLI release (default latest)
 #   REPO_ARCHIVE_URL   override the payload archive the one-liner streams
 #   REPO_URL           clone that instead of streaming an archive (needs git)
 
@@ -151,6 +151,8 @@ pass_skills() {
 }
 
 pass_mcp() {
+  agent_mcp_table > /dev/null \
+    || { problem "mcp: cannot read effective agent configuration"; return 1; }
   mcp_prune_duplicates
   mcp_converge
   mcp_report_variants

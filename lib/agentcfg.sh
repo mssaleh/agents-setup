@@ -2,26 +2,22 @@
 # lib/agentcfg.sh — three config formats normalised to
 # `agent <TAB> name <TAB> kind <TAB> target <TAB> enabled`.
 #
-# Parsed directly rather than through each agent's `mcp list`: those health-check
-# every server, so they need the network and take seconds, and `claude mcp get`
-# omits the target for a server disabled in the current project.
+# Claude and Codex use file readers; OpenCode supplies its merged global config
+# through `debug config`, without MCP connection health checks.
 # shellcheck shell=bash
 
-# Same paths on macOS and Linux — all homedir-derived. The asymmetry is upstream:
-# Claude Code and `skills` honour CLAUDE_CONFIG_DIR, `add-mcp` writes
-# ~/.claude.json regardless.
+# Claude Code 2.1 uses CLAUDE_CONFIG_DIR/.claude.json when that variable is set.
+CLAUDE_CONFIG=${CLAUDE_CONFIG:-${CLAUDE_CONFIG_DIR:+$CLAUDE_CONFIG_DIR/.claude.json}}
 CLAUDE_CONFIG=${CLAUDE_CONFIG:-$HOME/.claude.json}
 CLAUDE_HOME=${CLAUDE_HOME:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}
 CODEX_HOME=${CODEX_HOME:-$HOME/.codex}
 
-# add-mcp writes whichever of these exists, and creates the .jsonc when neither
-# does. A fixed .jsonc on a .json host finds no servers, so every row reads as
-# missing and is reinstalled every run.
+# OpenCode 1.18 named adds prefer .json and create it when neither file exists.
 opencode_config_path() {
-  local dir="$HOME/.config/opencode"
-  [[ -f "$dir/opencode.jsonc" ]] && { printf '%s\n' "$dir/opencode.jsonc"; return; }
+  local dir="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
   [[ -f "$dir/opencode.json" ]]  && { printf '%s\n' "$dir/opencode.json"; return; }
-  printf '%s\n' "$dir/opencode.jsonc"
+  [[ -f "$dir/opencode.jsonc" ]] && { printf '%s\n' "$dir/opencode.jsonc"; return; }
+  printf '%s\n' "$dir/opencode.json"
 }
 OPENCODE_CONFIG=${OPENCODE_CONFIG:-$(opencode_config_path)}
 
@@ -31,7 +27,7 @@ MCP_TABLE_CACHE=""
 # document, and an indentation reader returns nothing for it — which reads as
 # every server missing. JSONC comments are skipped outside string literals.
 json_mcp_block() {
-  [[ -f "$1" ]] || return 0
+  [[ "$1" == - || -f "$1" ]] || return 0
   awk -v want="$2" '
     function flush(  i, rest, first) {
       if (name == "") return
@@ -155,8 +151,11 @@ agent_mcp_table() {
     MCP_TABLE_CACHE=$(
       json_mcp_block "$CLAUDE_CONFIG" mcpServers | sed 's/^/claude-code\t/'
       toml_mcp_servers "$CODEX_HOME/config.toml" | sed 's/^/codex\t/'
-      json_mcp_block "$OPENCODE_CONFIG" mcp | sed 's/^/opencode\t/'
+      (cd / && opencode --pure debug config < /dev/null) \
+        | json_mcp_block - mcp | sed 's/^/opencode\t/'
     )
+    local status=$?
+    if ((status != 0)); then MCP_TABLE_CACHE=""; return "$status"; fi
   fi
   printf '%s\n' "$MCP_TABLE_CACHE"
 }

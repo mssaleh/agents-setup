@@ -1,20 +1,45 @@
 #!/usr/bin/env bash
 # lib/mcp.sh — install every declared MCP server into every declared agent.
 #
-# The name comes from the manifest row, never a command line, and -g is always
-# passed: `claude mcp add` defaults to project scope, which is invisible
-# elsewhere. A row is satisfied only when the agent resolves the name to the
-# declared target.
+# Native commands write user configuration. A row is satisfied only when the
+# agent resolves its declared name to its declared target.
 # shellcheck shell=bash
 
-add_mcp_cli() { run npx -y "add-mcp@${ADD_MCP_CLI_VERSION:-latest}" "$@"; }
-
-# -a repeats; a comma-joined list is rejected as "Invalid agents".
-agent_flags() {
-  local agent
-  while IFS= read -r agent; do
-    [[ -n "$agent" ]] && printf -- '-a\n%s\n' "$agent"
-  done < <(printf '%s\n' "$1" | tr ',' '\n')
+mcp_install() {
+  local agent="$1" name="$2" transport="$3" target="$4"
+  local command=()
+  if [[ "$transport" == stdio ]]; then
+    case "$target" in
+      /*|~/*|./*|../*) command=("$target") ;;
+      *) command=(npx -y "$target") ;;
+    esac
+  fi
+  case "$agent" in
+    claude-code)
+      # Claude Code 2.1 rejects an existing name at the same scope.
+      if [[ -n "$(agent_mcp_target "$agent" "$name")" ]]; then
+        run claude mcp remove --scope user "$name" || return
+      fi
+      if [[ "$transport" == stdio ]]; then
+        run claude mcp add --scope user --transport stdio "$name" -- ${command[@]+"${command[@]}"}
+      else
+        run claude mcp add --scope user --transport "$transport" "$name" "$target"
+      fi ;;
+    codex)
+      if [[ "$transport" == stdio ]]; then
+        run codex mcp add "$name" -- ${command[@]+"${command[@]}"}
+      else
+        run codex mcp add "$name" --url "$target"
+      fi ;;
+    opencode)
+      # OpenCode 1.18 named adds write global config; V2 requires --global.
+      if [[ "$transport" == stdio ]]; then
+        run opencode mcp add "$name" -- ${command[@]+"${command[@]}"}
+      else
+        run opencode mcp add "$name" --url "$target"
+      fi ;;
+    *) fail "no native MCP installer for $agent" ;;
+  esac
 }
 
 # Every remote transport is a URL entry; only stdio names a command.
@@ -102,7 +127,9 @@ mcp_host_target() {
 
 # Only the agents that need work are named, so a settled host writes nothing.
 mcp_converge() {
-  local row name transport target agents state missing wrong detail flags f fix use
+  local row name transport target agents state missing wrong detail agent f fix use
+  agent_mcp_table > /dev/null \
+    || { problem "mcp: cannot read effective agent configuration"; return 1; }
   while IFS= read -r row; do
     name=$(manifest_field "$row" 1)
     transport=$(manifest_field "$row" 2)
@@ -127,13 +154,14 @@ mcp_converge() {
     fi
     while IFS= read -r f; do [[ -n "$f" ]] && plan "mcp:$f:$name"; done \
       < <(printf '%s\n' "$fix" | tr ',' '\n')
-    flags=(); while IFS= read -r f; do flags+=("$f"); done < <(agent_flags "$fix")
-    case "$transport" in
-      stdio)    add_mcp_cli "$use" -n "$name" -g ${flags[@]+"${flags[@]}"} -y ;;
-      http|sse) add_mcp_cli "$use" -n "$name" -t "$transport" -g ${flags[@]+"${flags[@]}"} -y ;;
-      *)        fail "unknown transport '$transport' for $name in mcp.tsv" ;;
-    esac
+    while IFS= read -r agent; do
+      [[ -n "$agent" ]] || continue
+      mcp_install "$agent" "$name" "$transport" "$use" \
+        || problem "mcp: native command failed for '$name' in $agent"
+    done < <(printf '%s\n' "$fix" | tr ',' '\n')
     agent_mcp_invalidate
+    agent_mcp_table > /dev/null \
+      || { problem "mcp: cannot read configuration after native writes"; return 1; }
   done < <(manifest_rows "$MANIFEST_DIR/mcp.tsv")
 }
 
@@ -167,7 +195,7 @@ mcp_report_project_scope() {
 }
 
 # "<name>\t<target>\t<row it duplicates>" — a second name for an endpoint a row
-# already installs. Nothing is overwritten; the agent just connects twice.
+# already installs.
 mcp_duplicates() {
   local agent="$1" name got target dup
   while IFS= read -r name; do
@@ -181,36 +209,37 @@ mcp_duplicates() {
   return 0
 }
 
-# Opt-in: it deletes configuration this repo did not write. Runs before converge,
-# so anything caught by the substring rule below comes back in the same run.
+# Opt-in: remove an undeclared name for a declared endpoint.
 mcp_prune_duplicates() {
   [[ -n "${PRUNE_DUPLICATE_MCP:-}" ]] || return 0
-  local agent name target dup collide
+  local agent name target dup
   for agent in claude-code codex opencode; do
     while IFS=$'\t' read -r name target dup; do
       [[ -n "$name" ]] || continue
-      # `add-mcp remove` matches serverName.includes(query) and -y takes every match.
-      collide=$(agent_mcp_names "$agent" | grep -F "$name" | grep -vxF "$name")
-      if [[ -n "$collide" ]]; then
-        warn "$agent: leaving '$name' — add-mcp removes on a substring match and would take $(oneline "$collide") too; remove it by hand"
+      if [[ "$agent" == opencode ]]; then
+        problem "opencode: cannot remove '$name'; OpenCode 1.18 has no native MCP remove command (config: $OPENCODE_CONFIG)"
         continue
       fi
       delta "$agent: removing '$name', a second name for $dup's endpoint"
-      add_mcp_cli remove "$name" -g -a "$agent" -y
+      case "$agent" in
+        claude-code) run claude mcp remove --scope user "$name" ;;
+        codex) run codex mcp remove "$name" ;;
+      esac || problem "mcp: native removal failed for '$name' in $agent"
       agent_mcp_invalidate
     done < <(mcp_duplicates "$agent")
   done
 }
 
-# Not removed: Codex's node_repl is injected by the ChatGPT desktop app, and
-# removing it breaks the in-app browser.
+# Undeclared servers can belong to users or desktop integrations.
 mcp_report_undeclared() {
-  local agent name extra dups
+  local agent name extra dups removal
   for agent in claude-code codex opencode; do
+    removal="--prune-duplicate-mcp removes it"
+    [[ "$agent" != opencode ]] || removal="OpenCode 1.18 has no native MCP remove command"
     dups=$(mcp_duplicates "$agent" | cut -f1)
     while IFS=$'\t' read -r name target dup; do
       [[ -n "$name" ]] || continue
-      warn "$agent: '$name' is a second name for $target, which the manifest installs as '$dup' — the agent connects twice and every tool appears twice; --prune-duplicate-mcp removes it"
+      warn "$agent: '$name' is a second name for $target, declared as '$dup'; $removal"
     done < <(mcp_duplicates "$agent")
 
     extra=$(comm -13 <(manifest_mcp_names) <(agent_mcp_names "$agent"))

@@ -126,6 +126,8 @@ verify_mirrors() {
 # was overwritten is the defect being checked for.
 verify_mcp() {
   local row name transport target agents state unfixed missing wrong detail
+  agent_mcp_table > /dev/null \
+    || { problem "mcp: cannot read effective agent configuration"; return 1; }
   while IFS= read -r row; do
     name=$(manifest_field "$row" 1)
     transport=$(manifest_field "$row" 2)
